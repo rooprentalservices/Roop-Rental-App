@@ -72,11 +72,32 @@ function dbClear(store) {
 /* ---------- Utilities ---------- */
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 function todayISO() { return new Date().toISOString().slice(0, 10); }
+function pad2(n) { return String(n).padStart(2, '0'); }
 function fmtDate(iso) {
   if (!iso) return '—';
   const d = new Date(iso + (iso.length === 10 ? 'T00:00:00' : ''));
   if (isNaN(d)) return iso;
-  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+function fmtTime(t) {
+  if (!t) return '';
+  const [h, m] = t.split(':').map(Number);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${pad2(m)} ${ampm}`;
+}
+function fmtDateTime(iso, time) {
+  if (!iso) return '—';
+  return time ? `${fmtDate(iso)}, ${fmtTime(time)}` : fmtDate(iso);
+}
+function combineDateTime(dateStr, timeStr) {
+  return new Date(`${dateStr || todayISO()}T${timeStr || '00:00'}:00`);
+}
+function rentalDays(r) {
+  const start = combineDateTime(r.date, r.time);
+  const end = r.actualReturnDate ? combineDateTime(r.actualReturnDate, r.actualReturnTime) : new Date();
+  const diff = Math.ceil((end - start) / 86400000);
+  return Math.max(diff, 1);
 }
 function fmtMoney(n) {
   n = Number(n) || 0;
@@ -99,7 +120,13 @@ function escapeHtml(s) {
   return (s || '').toString().replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-const PRELOADED_ITEMS = ['8 ft Ladder', '10 ft Ladder', '15 ft Ladder', '20 ft Ladder', 'Drum', 'Fan', 'H Frame', 'Scaffolding Panel'];
+const ITEM_RATES = {
+  'H Frames': 50, 'Bracings': 0, 'Walkway Plank': 20, 'Wheels': 15, 'Jack': 25,
+  'Ladder 6ft': 30, 'Ladder 8ft': 50, 'Ladder 10ft': 100, 'Ladder 12ft': 120,
+  'Ladder 15ft': 200, 'Ladder 18ft': 300, 'Ladder 20ft': 300, 'Sidi 20ft': 250,
+  'Drum': 50, 'Jhula': 150
+};
+const PRELOADED_ITEMS = Object.keys(ITEM_RATES);
 
 /* ---------- Global State ---------- */
 const state = {
@@ -126,12 +153,12 @@ const state = {
 };
 
 /* ---------- Rental computations ---------- */
-function itemTotal(item) {
-  const days = daysBetween(item.startDate || todayISO(), item.actualReturn || null);
+function itemTotal(item, r) {
+  const days = rentalDays(r);
   return (Number(item.qty) || 0) * (Number(item.rentPerDay) || 0) * days;
 }
 function rentalItemsTotal(r) {
-  return (r.items || []).reduce((sum, it) => sum + itemTotal(it), 0);
+  return (r.items || []).reduce((sum, it) => sum + itemTotal(it, r), 0);
 }
 function rentalPaid(r) {
   const adv = Number(r.advanceAmount) || 0;
@@ -145,6 +172,7 @@ function rentalDue(r) {
   return Math.max(rentalGrandTotal(r) - rentalPaid(r), 0);
 }
 function itemReturnState(r) {
+  if (r.actualReturnDate) return 'returned';
   const items = r.items || [];
   if (!items.length) return 'on';
   const totalQty = items.reduce((s, i) => s + (Number(i.qty) || 0), 0);
@@ -193,12 +221,10 @@ function computeStats() {
   const today = todayISO();
   const totalActive = active.filter(r => itemReturnState(r) !== 'returned').length;
   const todayRentals = active.filter(r => r.date === today).length;
-  const dueToday = active.filter(r => r.expectedReturnDate === today).length;
-  const overdue = active.filter(r => r.expectedReturnDate && r.expectedReturnDate < today && itemReturnState(r) !== 'returned').length;
   const pendingPayments = active.filter(r => rentalDue(r) > 0).length;
   const monthStart = today.slice(0, 7);
   const monthlyRevenue = active.filter(r => (r.date || '').startsWith(monthStart)).reduce((s, r) => s + rentalPaid(r), 0);
-  return { totalActive, todayRentals, dueToday, overdue, pendingPayments, monthlyRevenue };
+  return { totalActive, todayRentals, pendingPayments, monthlyRevenue };
 }
 
 function renderDashboard() {
@@ -209,8 +235,6 @@ function renderDashboard() {
     <div class="stat-grid">
       <div class="stat-card accent"><div class="num">${s.totalActive}</div><div class="lbl">Active Rentals</div></div>
       <div class="stat-card"><div class="num">${s.todayRentals}</div><div class="lbl">Today's Rentals</div></div>
-      <div class="stat-card"><div class="num">${s.dueToday}</div><div class="lbl">Due Today</div></div>
-      <div class="stat-card"><div class="num" style="color:var(--red)">${s.overdue}</div><div class="lbl">Overdue</div></div>
       <div class="stat-card"><div class="num" style="color:var(--brown)">${s.pendingPayments}</div><div class="lbl">Pending Payments</div></div>
       <div class="stat-card"><div class="num">${fmtMoney(s.monthlyRevenue)}</div><div class="lbl">This Month Revenue</div></div>
     </div>
@@ -219,22 +243,28 @@ function renderDashboard() {
   `;
 }
 
+function truncate(s, n) {
+  s = s || '';
+  return s.length > n ? s.slice(0, n).trim() + '…' : s;
+}
+
 function rentalCardHTML(r) {
   const badge = rentalStatusBadge(r);
   const due = rentalDue(r);
-  const itemNames = (r.items || []).map(i => i.name).filter(Boolean).join(', ') || '—';
+  const names = (r.items || []).map(i => i.name).filter(Boolean);
+  const itemPreview = names.slice(0, 3).join(', ') + (names.length > 3 ? ` +${names.length - 3} more` : '') || '—';
   return `
   <div class="card rental-card" data-open-rental="${r.id}">
     <div class="top">
       <div>
         <div class="name">${escapeHtml(r.customerName || 'No name')}</div>
-        <div class="items">${escapeHtml(itemNames)}</div>
+        <div class="items">${escapeHtml(itemPreview)}</div>
       </div>
       <span class="badge ${badge.cls}">${badge.label}</span>
     </div>
     <div class="meta">
       <span>📅 ${fmtDate(r.date)}</span>
-      <span>↩️ ${fmtDate(r.expectedReturnDate)}</span>
+      ${r.deliveryAddress ? `<span>📍 ${escapeHtml(truncate(r.deliveryAddress, 28))}</span>` : ''}
       <span class="due-amt ${due <= 0 ? 'clear' : ''}">${due > 0 ? 'Due ' + fmtMoney(due) : 'Cleared'}</span>
     </div>
   </div>`;
@@ -268,7 +298,7 @@ function filterRentals() {
     nameZA: (a, b) => (b.customerName || '').localeCompare(a.customerName || ''),
     highestDue: (a, b) => rentalDue(b) - rentalDue(a),
     lowestDue: (a, b) => rentalDue(a) - rentalDue(b),
-    returnDate: (a, b) => (a.expectedReturnDate || '').localeCompare(b.expectedReturnDate || '')
+    returnDate: (a, b) => (a.actualReturnDate || '').localeCompare(b.actualReturnDate || '')
   };
   list.sort(sortFns[state.sort] || sortFns.newest);
   return list;
@@ -437,6 +467,25 @@ function renderSettings() {
       <button class="btn btn-primary" id="saveSettingsBtn">Save Business Details</button>
     </div>
 
+    <div class="section-title">Invoice Signature &amp; Stamp</div>
+    <div class="card">
+      <p style="font-size:12px;color:var(--text-soft);margin-top:0;">Uploaded once — every invoice you print will automatically include your stamp and signature.</p>
+      <div class="field-row">
+        <div class="field">
+          <label>Signature</label>
+          ${s.signatureImg ? `<img src="${s.signatureImg}" style="max-height:50px;display:block;margin-bottom:6px;">` : ''}
+          <button type="button" class="btn btn-ghost btn-sm" id="uploadSigBtn">${s.signatureImg ? 'Replace' : 'Upload'} Signature</button>
+          <input type="file" id="sigFile" accept="image/*" style="display:none;">
+        </div>
+        <div class="field">
+          <label>Stamp</label>
+          ${s.stampImg ? `<img src="${s.stampImg}" style="max-height:50px;display:block;margin-bottom:6px;">` : ''}
+          <button type="button" class="btn btn-ghost btn-sm" id="uploadStampBtn">${s.stampImg ? 'Replace' : 'Upload'} Stamp</button>
+          <input type="file" id="stampFile" accept="image/*" style="display:none;">
+        </div>
+      </div>
+    </div>
+
     <div class="section-title">App Lock</div>
     <div class="card">
       <div class="field" style="display:flex;justify-content:space-between;align-items:center;">
@@ -487,12 +536,12 @@ function newBlankRental() {
     transportMode: '', transporterName: '', transporterMobile: '',
     items: [blankItem()],
     advanceAmount: 0, advanceMode: 'Cash', refundAmount: 0, oldDues: 0, notes: '',
-    expectedReturnDate: '', actualReturnDate: '',
+    actualReturnDate: '', actualReturnTime: '',
     payments: [], kyc: [], archived: false, deleted: false
   };
 }
 function blankItem() {
-  return { id: uid(), name: '', qty: 1, rentPerDay: state.settings.defaultRent || 0, startDate: todayISO(), returnedQty: 0, expectedReturn: '', actualReturn: '', remarks: '' };
+  return { id: uid(), name: '', qty: 1, rentPerDay: 0, returnedQty: 0 };
 }
 
 function openRentalForm(existingId) {
@@ -535,15 +584,18 @@ function rentalFormHTML() {
     <div class="field"><label>Transporter Mobile</label><input id="f_transporterMobile" value="${escapeHtml(r.transporterMobile)}" inputmode="tel"></div>
   </div>
 
-  <div class="section-title">Date &amp; Return</div>
+  <div class="section-title">Rental Date &amp; Time</div>
   <div class="field-row">
     <div class="field"><label>Rental Date</label><input id="f_date" type="date" value="${r.date}"></div>
     <div class="field"><label>Time</label><input id="f_time" type="time" value="${r.time || ''}"></div>
   </div>
+
+  <div class="section-title">Actual Return</div>
   <div class="field-row">
-    <div class="field"><label>Expected Return Date</label><input id="f_expectedReturn" type="date" value="${r.expectedReturnDate || ''}"></div>
-    <div class="field"><label>Actual Return Date</label><input id="f_actualReturn" type="date" value="${r.actualReturnDate || ''}"></div>
+    <div class="field"><label>Return Date</label><input id="f_actualReturn" type="date" value="${r.actualReturnDate || ''}"></div>
+    <div class="field"><label>Return Time</label><input id="f_actualReturnTime" type="time" value="${r.actualReturnTime || ''}"></div>
   </div>
+  <div style="font-size:12px;color:var(--text-soft);margin:-6px 0 12px;">Rental Days (auto-calculated): <b id="rentalDaysDisplay">${rentalDays(r)}</b>${r.actualReturnDate ? '' : ' (still ongoing — counted till today)'}</div>
 
   <div class="section-title">Items <a id="addItemBtn" style="cursor:pointer;">+ Add Item</a></div>
   <div id="itemsWrap">${r.items.map((it, idx) => itemRowHTML(it, idx)).join('')}</div>
@@ -592,23 +644,15 @@ function itemRowHTML(it, idx) {
   <div class="item-row" data-item-idx="${idx}">
     <button type="button" class="del-item" data-del-item="${idx}">✕</button>
     <div class="field">
-      <label>Item Name</label>
-      <input list="itemSuggestions" class="it-name" data-idx="${idx}" value="${escapeHtml(it.name)}" placeholder="Select or type item">
+      <label>Item</label>
+      <input list="itemSuggestions" class="it-name" data-idx="${idx}" value="${escapeHtml(it.name)}" placeholder="Select from list or type item">
     </div>
     <div class="field-row">
       <div class="field"><label>Qty</label><input type="number" class="it-qty" data-idx="${idx}" value="${it.qty}"></div>
-      <div class="field"><label>Rent/Day</label><input type="number" class="it-rate" data-idx="${idx}" value="${it.rentPerDay}"></div>
+      <div class="field"><label>Rate/Day</label><input type="number" class="it-rate" data-idx="${idx}" value="${it.rentPerDay}"></div>
     </div>
-    <div class="field-row">
-      <div class="field"><label>Start Date</label><input type="date" class="it-start" data-idx="${idx}" value="${it.startDate || ''}"></div>
-      <div class="field"><label>Returned Qty</label><input type="number" class="it-retqty" data-idx="${idx}" value="${it.returnedQty || 0}"></div>
-    </div>
-    <div class="field-row">
-      <div class="field"><label>Expected Return</label><input type="date" class="it-expret" data-idx="${idx}" value="${it.expectedReturn || ''}"></div>
-      <div class="field"><label>Actual Return</label><input type="date" class="it-actret" data-idx="${idx}" value="${it.actualReturn || ''}"></div>
-    </div>
-    <div class="field"><label>Remarks</label><input class="it-remarks" data-idx="${idx}" value="${escapeHtml(it.remarks || '')}"></div>
-    <div style="font-size:12px;color:var(--text-soft);">Line total: <b>${fmtMoney(itemTotal(it))}</b></div>
+    <div class="field"><label>Returned Qty (if partially returned)</label><input type="number" class="it-retqty" data-idx="${idx}" value="${it.returnedQty || 0}"></div>
+    <div style="font-size:12px;color:var(--text-soft);">Line total: <b>${fmtMoney(itemTotal(it, formDraft))}</b></div>
   </div>`;
 }
 
@@ -666,15 +710,18 @@ function bindRentalFormEvents() {
     f_customerName: 'customerName', f_customerMobile: 'customerMobile', f_altMobile: 'altMobile',
     f_customerAddress: 'customerAddress', f_deliveryAddress: 'deliveryAddress', f_transportMode: 'transportMode',
     f_transporterName: 'transporterName', f_transporterMobile: 'transporterMobile', f_date: 'date', f_time: 'time',
-    f_expectedReturn: 'expectedReturnDate', f_actualReturn: 'actualReturnDate', f_advance: 'advanceAmount',
+    f_actualReturn: 'actualReturnDate', f_actualReturnTime: 'actualReturnTime', f_advance: 'advanceAmount',
     f_advanceMode: 'advanceMode', f_oldDues: 'oldDues', f_refund: 'refundAmount', f_notes: 'notes'
   };
+  const dateFields = ['f_date', 'f_time', 'f_actualReturn', 'f_actualReturnTime'];
+  const totalsFields = ['f_advance', 'f_oldDues', 'f_refund'];
   Object.entries(simpleFields).forEach(([id, key]) => {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener('input', () => {
       formDraft[key] = el.type === 'number' ? Number(el.value) : el.value;
-      if (['f_advance', 'f_oldDues', 'f_refund'].includes(id)) refreshFormTotals();
+      if (dateFields.includes(id)) refreshAll();
+      else if (totalsFields.includes(id)) refreshFormTotals();
     });
   });
 
@@ -723,14 +770,17 @@ function bindRentalFormEvents() {
   function bindItemRow(idx) {
     const row = document.querySelector(`.item-row[data-item-idx="${idx}"]`);
     if (!row) return;
-    row.querySelector('.it-name').addEventListener('input', (e) => { formDraft.items[idx].name = e.target.value; });
+    row.querySelector('.it-name').addEventListener('input', (e) => {
+      formDraft.items[idx].name = e.target.value;
+      if (Object.prototype.hasOwnProperty.call(ITEM_RATES, e.target.value)) {
+        formDraft.items[idx].rentPerDay = ITEM_RATES[e.target.value];
+        row.querySelector('.it-rate').value = ITEM_RATES[e.target.value];
+        refreshFormTotals(); updateLineTotal(idx);
+      }
+    });
     row.querySelector('.it-qty').addEventListener('input', (e) => { formDraft.items[idx].qty = Number(e.target.value); refreshFormTotals(); updateLineTotal(idx); });
     row.querySelector('.it-rate').addEventListener('input', (e) => { formDraft.items[idx].rentPerDay = Number(e.target.value); refreshFormTotals(); updateLineTotal(idx); });
-    row.querySelector('.it-start').addEventListener('input', (e) => { formDraft.items[idx].startDate = e.target.value; refreshFormTotals(); updateLineTotal(idx); });
     row.querySelector('.it-retqty').addEventListener('input', (e) => { formDraft.items[idx].returnedQty = Number(e.target.value); });
-    row.querySelector('.it-expret').addEventListener('input', (e) => { formDraft.items[idx].expectedReturn = e.target.value; syncExpectedReturn(); });
-    row.querySelector('.it-actret').addEventListener('input', (e) => { formDraft.items[idx].actualReturn = e.target.value; refreshFormTotals(); updateLineTotal(idx); });
-    row.querySelector('.it-remarks').addEventListener('input', (e) => { formDraft.items[idx].remarks = e.target.value; });
     const delBtn = row.querySelector('[data-del-item]');
     if (delBtn) delBtn.addEventListener('click', () => {
       if (formDraft.items.length <= 1) { toast('At least one item row is required.'); return; }
@@ -742,12 +792,13 @@ function bindRentalFormEvents() {
     const row = document.querySelector(`.item-row[data-item-idx="${idx}"]`);
     if (!row) return;
     const el = row.lastElementChild;
-    if (el) el.innerHTML = `Line total: <b>${fmtMoney(itemTotal(formDraft.items[idx]))}</b>`;
+    if (el) el.innerHTML = `Line total: <b>${fmtMoney(itemTotal(formDraft.items[idx], formDraft))}</b>`;
   }
-  function syncExpectedReturn() {
-    // rental-level expected return = latest item expected return
-    const dates = formDraft.items.map(i => i.expectedReturn).filter(Boolean).sort();
-    if (dates.length) formDraft.expectedReturnDate = dates[dates.length - 1];
+  function refreshAll() {
+    const daysEl = document.getElementById('rentalDaysDisplay');
+    if (daysEl) daysEl.textContent = rentalDays(formDraft);
+    refreshFormTotals();
+    formDraft.items.forEach((_, idx) => updateLineTotal(idx));
   }
   function rerenderItems() {
     document.getElementById('itemsWrap').innerHTML = formDraft.items.map((it, idx) => itemRowHTML(it, idx)).join('');
@@ -821,9 +872,8 @@ function rentalDetailHTML(r) {
     <div style="font-size:13px;line-height:1.8;margin-top:8px;">
       📞 <a href="tel:${r.customerMobile}">${escapeHtml(r.customerMobile || '—')}</a>${r.altMobile ? ' / ' + escapeHtml(r.altMobile) : ''}<br>
       📍 ${escapeHtml(r.customerAddress || '—')}<br>
-      📅 Rental: ${fmtDate(r.date)} ${r.time ? '· ' + r.time : ''}<br>
-      ↩️ Expected Return: ${fmtDate(r.expectedReturnDate)}<br>
-      ${r.actualReturnDate ? `✅ Actual Return: ${fmtDate(r.actualReturnDate)}<br>` : ''}
+      📅 Rental: ${fmtDateTime(r.date, r.time)}<br>
+      ${r.actualReturnDate ? `✅ Returned: ${fmtDateTime(r.actualReturnDate, r.actualReturnTime)}<br>` : `⏳ Still ongoing (${rentalDays(r)} day${rentalDays(r) !== 1 ? 's' : ''} so far)<br>`}
       ${r.transporterName ? `🚚 ${escapeHtml(r.transporterName)} ${r.transporterMobile ? '(' + escapeHtml(r.transporterMobile) + ')' : ''}<br>` : ''}
     </div>
   </div>
@@ -832,7 +882,7 @@ function rentalDetailHTML(r) {
     ${r.items.map(it => `
       <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px;">
         <span>${escapeHtml(it.name)} × ${it.qty}${it.returnedQty ? ` (${it.returnedQty} returned)` : ''}</span>
-        <span>${fmtMoney(itemTotal(it))}</span>
+        <span>${fmtMoney(itemTotal(it, r))}</span>
       </div>`).join('')}
   </div>
   <div class="totals-box">
@@ -874,24 +924,24 @@ function kycThumbsViewHTML(kyc) {
 
 function buildWhatsAppText(r) {
   const s = state.settings;
+  const itemLines = r.items.map(i => `• ${i.name} x ${i.qty}`).join('\n');
   const lines = [
-    `🧾 ${s.businessName}`,
-    `Rental Details`,
+    `*${s.businessName}*`,
+    `_Rental Confirmation_`,
     ``,
-    `📅 Date: ${fmtDate(r.date)}`,
-    `👤 Customer: ${r.customerName}`,
-    `📞 Mobile: ${r.customerMobile || '—'}`,
-    `📦 Items: ${r.items.map(i => i.name + ' x' + i.qty).join(', ')}`,
-    `📅 Return Date: ${fmtDate(r.expectedReturnDate)}`,
-    `💰 Total Amount: ${fmtMoney(rentalGrandTotal(r))}`,
-    `💵 Advance: ${fmtMoney(r.advanceAmount)}`,
-    `🧾 Due Amount: ${fmtMoney(rentalDue(r))}`,
+    `👤 *Name:* ${r.customerName}`,
+    `📍 *Delivery Address:* ${r.deliveryAddress || r.customerAddress || '—'}`,
+    `📅 *Date & Time:* ${fmtDateTime(r.date, r.time)}`,
     ``,
-    `Thank you for your business.`,
-    `${s.ownerName}`,
+    `📦 *Items:*`,
+    itemLines,
+    ``,
+    `💵 *Advance Paid:* ${fmtMoney(r.advanceAmount)}`,
+    ``,
+    `Thank you for choosing us! 🙏`,
+    `*${s.ownerName}*`,
     `📞 ${s.phone}`,
-    `${s.businessName}`,
-    `${s.address}`
+    `${s.businessName}, ${s.address}`
   ];
   return lines.join('\n');
 }
@@ -936,7 +986,12 @@ function bindRentalDetailEvents(r) {
 function openInvoicePrint(r) {
   const s = state.settings;
   const w = window.open('', '_blank');
-  const rows = r.items.map(it => `<tr><td>${escapeHtml(it.name)}</td><td>${it.qty}</td><td>${fmtMoney(it.rentPerDay)}</td><td>${fmtMoney(itemTotal(it))}</td></tr>`).join('');
+  const rows = r.items.map(it => `<tr><td>${escapeHtml(it.name)}</td><td>${it.qty}</td><td>${fmtMoney(it.rentPerDay)}</td><td>${fmtMoney(itemTotal(it, r))}</td></tr>`).join('');
+  const stampSigBlock = `
+    <div style="display:flex;justify-content:flex-end;gap:24px;margin-top:36px;align-items:flex-end;">
+      ${s.stampImg ? `<img src="${s.stampImg}" style="max-height:90px;max-width:110px;opacity:.9;">` : ''}
+      ${s.signatureImg ? `<div style="text-align:center;"><img src="${s.signatureImg}" style="max-height:60px;max-width:150px;display:block;margin:0 auto;"><div style="border-top:1px solid #333;font-size:11px;padding-top:3px;margin-top:2px;">Authorized Signature</div></div>` : ''}
+    </div>`;
   w.document.write(`
     <html><head><title>Invoice - ${escapeHtml(r.customerName)}</title>
     <style>
@@ -955,15 +1010,17 @@ function openInvoicePrint(r) {
     <p><b>Customer:</b> ${escapeHtml(r.customerName)}<br>
     <b>Mobile:</b> ${escapeHtml(r.customerMobile || '—')}<br>
     <b>Address:</b> ${escapeHtml(r.customerAddress || '—')}<br>
-    <b>Rental Date:</b> ${fmtDate(r.date)} &nbsp; <b>Return Date:</b> ${fmtDate(r.expectedReturnDate)}</p>
+    <b>Rental Date:</b> ${fmtDateTime(r.date, r.time)} &nbsp; <b>Return:</b> ${r.actualReturnDate ? fmtDateTime(r.actualReturnDate, r.actualReturnTime) : 'Ongoing'}</p>
     <table><thead><tr><th>Item</th><th>Qty</th><th>Rate/Day</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>
     <div class="totals">
       <div><span>Items Total</span><span>${fmtMoney(rentalItemsTotal(r))}</span></div>
       <div><span>Old Dues</span><span>${fmtMoney(r.oldDues)}</span></div>
       <div><span>Refund</span><span>-${fmtMoney(r.refundAmount)}</span></div>
+
       <div><span>Advance Paid</span><span>-${fmtMoney(rentalPaid(r))}</span></div>
       <div class="grand"><span>Balance Due</span><span>${fmtMoney(rentalDue(r))}</span></div>
     </div>
+    ${stampSigBlock}
     <div class="foot">Thank you for your business.<br>${escapeHtml(s.ownerName)} · ${escapeHtml(s.phone)}</div>
     <script>window.onload = () => window.print();<\/script>
     </body></html>
@@ -1064,6 +1121,21 @@ function bindSettingsEvents() {
     document.getElementById('headerSub').textContent = state.settings.address + ' · ' + state.settings.ownerName;
     toast('Business details saved.');
   };
+  function readImageToSettings(file, key) {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      state.settings[key] = reader.result;
+      await dbPut('settings', { key: 'main', value: state.settings });
+      toast((key === 'signatureImg' ? 'Signature' : 'Stamp') + ' saved.');
+      route();
+    };
+    reader.readAsDataURL(file);
+  }
+  document.getElementById('uploadSigBtn').onclick = () => document.getElementById('sigFile').click();
+  document.getElementById('sigFile').addEventListener('change', (e) => { if (e.target.files[0]) readImageToSettings(e.target.files[0], 'signatureImg'); });
+  document.getElementById('uploadStampBtn').onclick = () => document.getElementById('stampFile').click();
+  document.getElementById('stampFile').addEventListener('change', (e) => { if (e.target.files[0]) readImageToSettings(e.target.files[0], 'stampImg'); });
+
   document.getElementById('pinToggle').onchange = (e) => {
     state.settings.pinEnabled = e.target.checked;
     document.getElementById('pinSetupWrap').style.display = e.target.checked ? '' : 'none';
