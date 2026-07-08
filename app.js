@@ -144,13 +144,26 @@ const state = {
     currency: '₹',
     defaultRent: 50,
     pin: '',
-    pinEnabled: false
+    pinEnabled: false,
+    invoiceCounter: 1,
+    invoicePrefix: 'RR'
   },
   searchQuery: '',
   filter: 'all',
   sort: 'newest',
   editingId: null
 };
+
+function nextInvoiceNumber() {
+  const n = state.settings.invoiceCounter || 1;
+  return `${state.settings.invoicePrefix || 'RR'}-${String(n).padStart(4, '0')}`;
+}
+function registerInvoiceNumberUsed(invNum) {
+  const match = /(\d+)\s*$/.exec(invNum || '');
+  const used = match ? parseInt(match[1], 10) : NaN;
+  const current = state.settings.invoiceCounter || 1;
+  state.settings.invoiceCounter = (!isNaN(used) && used >= current) ? used + 1 : current + 1;
+}
 
 /* ---------- Rental computations ---------- */
 function itemTotal(item, r) {
@@ -263,6 +276,7 @@ function rentalCardHTML(r) {
       <span class="badge ${badge.cls}">${badge.label}</span>
     </div>
     <div class="meta">
+      <span>#${escapeHtml(r.invoiceNumber || '—')}</span>
       <span>📅 ${fmtDate(r.date)}</span>
       ${r.deliveryAddress ? `<span>📍 ${escapeHtml(truncate(r.deliveryAddress, 28))}</span>` : ''}
       <span class="due-amt ${due <= 0 ? 'clear' : ''}">${due > 0 ? 'Due ' + fmtMoney(due) : 'Cleared'}</span>
@@ -404,15 +418,30 @@ function renderReports() {
   const monthlyData = months.map(m => active.filter(r => (r.date || '').startsWith(m)).reduce((s, r) => s + rentalPaid(r), 0));
   const maxMonth = Math.max(...monthlyData, 1);
 
+  // dues & collections by customer
+  const duesByCust = {}, collectedByCust = {};
+  active.forEach(r => {
+    const key = r.customerName || 'Unknown';
+    const due = rentalDue(r);
+    if (due > 0) duesByCust[key] = (duesByCust[key] || 0) + due;
+    const paid = rentalPaid(r);
+    if (paid > 0) collectedByCust[key] = (collectedByCust[key] || 0) + paid;
+  });
+  const duesList = Object.entries(duesByCust).sort((a, b) => b[1] - a[1]);
+  const collectedList = Object.entries(collectedByCust).sort((a, b) => b[1] - a[1]);
+
+  // all invoices, newest first
+  const allInvoices = [...active].sort((a, b) => b.createdAt - a.createdAt);
+
   return `
     <div class="page-header"><h2>Reports</h2></div>
     <div class="stat-grid">
-      <div class="stat-card"><div class="num">${totalRentals}</div><div class="lbl">Total Rentals</div></div>
-      <div class="stat-card"><div class="num">${fmtMoney(totalBilled)}</div><div class="lbl">Total Billed</div></div>
-      <div class="stat-card"><div class="num" style="color:var(--green)">${fmtMoney(totalReceived)}</div><div class="lbl">Total Received</div></div>
-      <div class="stat-card"><div class="num" style="color:var(--red)">${fmtMoney(totalDue)}</div><div class="lbl">Total Due</div></div>
-      <div class="stat-card"><div class="num">${fmtMoney(totalRefund)}</div><div class="lbl">Refunds Given</div></div>
-      <div class="stat-card"><div class="num">${fmtMoney(avgRental)}</div><div class="lbl">Average Rental</div></div>
+      <div class="stat-card" style="background:linear-gradient(135deg,#e0e7ff,#c7d2fe);"><div class="num" style="color:var(--indigo-900)">${totalRentals}</div><div class="lbl">Total Rentals</div></div>
+      <div class="stat-card" style="background:linear-gradient(135deg,#fef3c7,#fde68a);"><div class="num" style="color:#92400e">${fmtMoney(totalBilled)}</div><div class="lbl">Total Billed</div></div>
+      <div class="stat-card" style="background:linear-gradient(135deg,#dcfce7,#bbf7d0);"><div class="num" style="color:#15803d">${fmtMoney(totalReceived)}</div><div class="lbl">Total Received</div></div>
+      <div class="stat-card" style="background:linear-gradient(135deg,#fee2e2,#fecaca);"><div class="num" style="color:#b91c1c">${fmtMoney(totalDue)}</div><div class="lbl">Total Due</div></div>
+      <div class="stat-card" style="background:linear-gradient(135deg,#ede9fe,#ddd6fe);"><div class="num" style="color:#6d28d9">${fmtMoney(totalRefund)}</div><div class="lbl">Refunds Given</div></div>
+      <div class="stat-card" style="background:linear-gradient(135deg,#fae8ff,#f5d0fe);"><div class="num" style="color:#a21caf">${fmtMoney(avgRental)}</div><div class="lbl">Average Rental</div></div>
     </div>
 
     <div class="section-title">Monthly Revenue (6 months)</div>
@@ -445,6 +474,36 @@ function renderReports() {
           </div>
         </div>`).join('') : '<div class="empty">No data yet.</div>'}
     </div>
+
+    <div class="section-title">💰 Payment Dues by Customer</div>
+    <div class="card">
+      ${duesList.length ? duesList.map(([name, val]) => `
+        <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-bottom:1px solid var(--border);">
+          <span>${escapeHtml(name)}</span><b style="color:var(--red)">${fmtMoney(val)}</b>
+        </div>`).join('') : '<div class="empty">No pending dues 🎉</div>'}
+    </div>
+
+    <div class="section-title">✅ Payment Collected by Customer</div>
+    <div class="card">
+      ${collectedList.length ? collectedList.map(([name, val]) => `
+        <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-bottom:1px solid var(--border);">
+          <span>${escapeHtml(name)}</span><b style="color:var(--green)">${fmtMoney(val)}</b>
+        </div>`).join('') : '<div class="empty">No data yet.</div>'}
+    </div>
+
+    <div class="section-title">🧾 All Invoices <span style="font-weight:400;color:var(--text-soft);font-size:11.5px;">(${allInvoices.length})</span></div>
+    ${allInvoices.length ? allInvoices.map(r => {
+      const due = rentalDue(r);
+      return `<div class="card" data-open-rental="${r.id}" style="cursor:pointer;">
+        <div class="top">
+          <div>
+            <div class="name">#${escapeHtml(r.invoiceNumber || '—')} · ${escapeHtml(r.customerName || 'No name')}</div>
+            <div class="items">${fmtDate(r.date)} · ${fmtMoney(rentalGrandTotal(r))}</div>
+          </div>
+          <span class="due-amt ${due <= 0 ? 'clear' : ''}">${due > 0 ? 'Due ' + fmtMoney(due) : 'Paid'}</span>
+        </div>
+      </div>`;
+    }).join('') : '<div class="empty">No invoices yet.</div>'}
   `;
 }
 
@@ -484,6 +543,17 @@ function renderSettings() {
           <input type="file" id="stampFile" accept="image/*" style="display:none;">
         </div>
       </div>
+    </div>
+
+    <div class="section-title">Invoice Numbering</div>
+    <div class="card">
+      <p style="font-size:12px;color:var(--text-soft);margin-top:0;">Every new rental automatically gets the next invoice number. Change these only if you need to realign the sequence.</p>
+      <div class="field-row">
+        <div class="field"><label>Prefix</label><input id="setInvoicePrefix" value="${escapeHtml(s.invoicePrefix || 'RR')}"></div>
+        <div class="field"><label>Next Number</label><input id="setInvoiceCounter" type="number" value="${s.invoiceCounter || 1}"></div>
+      </div>
+      <div style="font-size:12px;color:var(--text-soft);margin:-6px 0 10px;">Next invoice will be: <b>${nextInvoiceNumber()}</b></div>
+      <button class="btn btn-outline" id="saveInvoiceNumBtn">Save Numbering</button>
     </div>
 
     <div class="section-title">App Lock</div>
@@ -531,10 +601,11 @@ let formDraft = null; // working copy of rental being added/edited
 function newBlankRental() {
   return {
     id: uid(), createdAt: Date.now(),
+    invoiceNumber: nextInvoiceNumber(),
     date: todayISO(), time: new Date().toTimeString().slice(0, 5),
     customerName: '', customerMobile: '', altMobile: '', customerAddress: '', deliveryAddress: '',
     transportMode: '', transporterName: '', transporterMobile: '',
-    items: [blankItem()],
+    items: [],
     advanceAmount: 0, advanceMode: 'Cash', refundAmount: 0, oldDues: 0, notes: '',
     actualReturnDate: '', actualReturnTime: '',
     payments: [], kyc: [], archived: false, deleted: false
@@ -560,6 +631,8 @@ function rentalFormHTML() {
   return `
   <div class="modal-handle"></div>
   <div class="page-header"><h2>${state.editingId ? 'Edit Rental' : 'New Rental'}</h2><button class="back-btn" id="closeForm">✕</button></div>
+
+  <div class="field"><label>Invoice Number</label><input id="f_invoiceNumber" value="${escapeHtml(r.invoiceNumber || '')}"></div>
 
   <div class="section-title">Customer</div>
   <div class="field" style="position:relative;">
@@ -597,8 +670,11 @@ function rentalFormHTML() {
   </div>
   <div style="font-size:12px;color:var(--text-soft);margin:-6px 0 12px;">Rental Days (auto-calculated): <b id="rentalDaysDisplay">${rentalDays(r)}</b>${r.actualReturnDate ? '' : ' (still ongoing — counted till today)'}</div>
 
-  <div class="section-title">Items <a id="addItemBtn" style="cursor:pointer;">+ Add Item</a></div>
-  <div id="itemsWrap">${r.items.map((it, idx) => itemRowHTML(it, idx)).join('')}</div>
+  <div class="section-title">Items — just enter quantity</div>
+  <div class="card" id="stdItemsWrap">${standardItemsHTML(r.items)}</div>
+
+  <div class="section-title">Other / Custom Items <a id="addItemBtn" style="cursor:pointer;">+ Add Item</a></div>
+  <div id="itemsWrap">${customItemsHTML(r.items)}</div>
 
   <div class="section-title">Payment</div>
   <div class="field-row">
@@ -639,19 +715,39 @@ function rentalFormHTML() {
   `;
 }
 
-function itemRowHTML(it, idx) {
+function standardItemsHTML(items) {
+  return Object.keys(ITEM_RATES).map(name => {
+    const entry = (items || []).find(it => it.name === name);
+    const qty = entry ? entry.qty : '';
+    const rate = entry ? entry.rentPerDay : ITEM_RATES[name];
+    return `
+    <div class="std-item-row" data-std-name="${escapeHtml(name)}">
+      <div class="std-item-label">${escapeHtml(name)}</div>
+      <input type="number" class="std-qty" min="0" placeholder="0" value="${qty}">
+      <span class="std-x">×</span>
+      <input type="number" class="std-rate" value="${rate}">
+    </div>`;
+  }).join('');
+}
+
+function customItemsHTML(items) {
+  const custom = (items || []).filter(it => !Object.prototype.hasOwnProperty.call(ITEM_RATES, it.name));
+  if (!custom.length) return '<div class="empty" style="padding:14px 4px;">No custom items added.</div>';
+  return custom.map(it => itemRowHTML(it, it.id)).join('');
+}
+
+function itemRowHTML(it, id) {
   return `
-  <div class="item-row" data-item-idx="${idx}">
-    <button type="button" class="del-item" data-del-item="${idx}">✕</button>
+  <div class="item-row" data-item-id="${id}">
+    <button type="button" class="del-item" data-del-item="${id}">✕</button>
     <div class="field">
       <label>Item</label>
-      <input list="itemSuggestions" class="it-name" data-idx="${idx}" value="${escapeHtml(it.name)}" placeholder="Select from list or type item">
+      <input list="itemSuggestions" class="it-name" data-id="${id}" value="${escapeHtml(it.name)}" placeholder="Select from list or type item">
     </div>
     <div class="field-row">
-      <div class="field"><label>Qty</label><input type="number" class="it-qty" data-idx="${idx}" value="${it.qty}"></div>
-      <div class="field"><label>Rate/Day</label><input type="number" class="it-rate" data-idx="${idx}" value="${it.rentPerDay}"></div>
+      <div class="field"><label>Qty</label><input type="number" class="it-qty" data-id="${id}" value="${it.qty}"></div>
+      <div class="field"><label>Rate/Day</label><input type="number" class="it-rate" data-id="${id}" value="${it.rentPerDay}"></div>
     </div>
-    <div class="field"><label>Returned Qty (if partially returned)</label><input type="number" class="it-retqty" data-idx="${idx}" value="${it.returnedQty || 0}"></div>
     <div style="font-size:12px;color:var(--text-soft);">Line total: <b>${fmtMoney(itemTotal(it, formDraft))}</b></div>
   </div>`;
 }
@@ -707,7 +803,7 @@ function bindRentalFormEvents() {
   document.getElementById('cancelFormBtn').onclick = closeModal;
 
   const simpleFields = {
-    f_customerName: 'customerName', f_customerMobile: 'customerMobile', f_altMobile: 'altMobile',
+    f_invoiceNumber: 'invoiceNumber', f_customerName: 'customerName', f_customerMobile: 'customerMobile', f_altMobile: 'altMobile',
     f_customerAddress: 'customerAddress', f_deliveryAddress: 'deliveryAddress', f_transportMode: 'transportMode',
     f_transporterName: 'transporterName', f_transporterMobile: 'transporterMobile', f_date: 'date', f_time: 'time',
     f_actualReturn: 'actualReturnDate', f_actualReturnTime: 'actualReturnTime', f_advance: 'advanceAmount',
@@ -766,46 +862,70 @@ function bindRentalFormEvents() {
     } catch (e) { toast('Contact pick cancelled.'); }
   };
 
-  // items
-  function bindItemRow(idx) {
-    const row = document.querySelector(`.item-row[data-item-idx="${idx}"]`);
+  // standard (prefilled) items — just enter quantity
+  function setStandardItem(name, qty, rate) {
+    const idx = formDraft.items.findIndex(it => it.name === name);
+    if (qty > 0) {
+      if (idx >= 0) { formDraft.items[idx].qty = qty; formDraft.items[idx].rentPerDay = rate; }
+      else formDraft.items.push({ id: uid(), name, qty, rentPerDay: rate, returnedQty: 0 });
+    } else if (idx >= 0) {
+      formDraft.items.splice(idx, 1);
+    }
+  }
+  document.querySelectorAll('#stdItemsWrap .std-item-row').forEach(row => {
+    const name = row.dataset.stdName;
+    const qtyInput = row.querySelector('.std-qty');
+    const rateInput = row.querySelector('.std-rate');
+    qtyInput.addEventListener('input', () => {
+      setStandardItem(name, Number(qtyInput.value) || 0, Number(rateInput.value) || 0);
+      refreshFormTotals();
+    });
+    rateInput.addEventListener('input', () => {
+      if (Number(qtyInput.value) > 0) setStandardItem(name, Number(qtyInput.value), Number(rateInput.value) || 0);
+      refreshFormTotals();
+    });
+  });
+
+  // custom (extra) items — free text name, id-keyed
+  function bindItemRow(id) {
+    const row = document.querySelector(`.item-row[data-item-id="${id}"]`);
     if (!row) return;
     row.querySelector('.it-name').addEventListener('input', (e) => {
-      formDraft.items[idx].name = e.target.value;
+      const item = formDraft.items.find(it => it.id === id);
+      item.name = e.target.value;
       if (Object.prototype.hasOwnProperty.call(ITEM_RATES, e.target.value)) {
-        formDraft.items[idx].rentPerDay = ITEM_RATES[e.target.value];
+        item.rentPerDay = ITEM_RATES[e.target.value];
         row.querySelector('.it-rate').value = ITEM_RATES[e.target.value];
-        refreshFormTotals(); updateLineTotal(idx);
+        refreshFormTotals(); updateLineTotal(id);
       }
     });
-    row.querySelector('.it-qty').addEventListener('input', (e) => { formDraft.items[idx].qty = Number(e.target.value); refreshFormTotals(); updateLineTotal(idx); });
-    row.querySelector('.it-rate').addEventListener('input', (e) => { formDraft.items[idx].rentPerDay = Number(e.target.value); refreshFormTotals(); updateLineTotal(idx); });
-    row.querySelector('.it-retqty').addEventListener('input', (e) => { formDraft.items[idx].returnedQty = Number(e.target.value); });
+    row.querySelector('.it-qty').addEventListener('input', (e) => { formDraft.items.find(it => it.id === id).qty = Number(e.target.value); refreshFormTotals(); updateLineTotal(id); });
+    row.querySelector('.it-rate').addEventListener('input', (e) => { formDraft.items.find(it => it.id === id).rentPerDay = Number(e.target.value); refreshFormTotals(); updateLineTotal(id); });
     const delBtn = row.querySelector('[data-del-item]');
     if (delBtn) delBtn.addEventListener('click', () => {
-      if (formDraft.items.length <= 1) { toast('At least one item row is required.'); return; }
-      formDraft.items.splice(idx, 1);
-      rerenderItems();
+      formDraft.items = formDraft.items.filter(it => it.id !== id);
+      rerenderCustomItems();
     });
   }
-  function updateLineTotal(idx) {
-    const row = document.querySelector(`.item-row[data-item-idx="${idx}"]`);
+  function updateLineTotal(id) {
+    const row = document.querySelector(`.item-row[data-item-id="${id}"]`);
     if (!row) return;
+    const item = formDraft.items.find(it => it.id === id);
     const el = row.lastElementChild;
-    if (el) el.innerHTML = `Line total: <b>${fmtMoney(itemTotal(formDraft.items[idx], formDraft))}</b>`;
+    if (el && item) el.innerHTML = `Line total: <b>${fmtMoney(itemTotal(item, formDraft))}</b>`;
   }
   function refreshAll() {
     const daysEl = document.getElementById('rentalDaysDisplay');
     if (daysEl) daysEl.textContent = rentalDays(formDraft);
     refreshFormTotals();
-    formDraft.items.forEach((_, idx) => updateLineTotal(idx));
+    formDraft.items.forEach(it => updateLineTotal(it.id));
   }
-  function rerenderItems() {
-    document.getElementById('itemsWrap').innerHTML = formDraft.items.map((it, idx) => itemRowHTML(it, idx)).join('');
-    formDraft.items.forEach((_, idx) => bindItemRow(idx));
+  function rerenderCustomItems() {
+    document.getElementById('itemsWrap').innerHTML = customItemsHTML(formDraft.items);
+    formDraft.items.filter(it => !Object.prototype.hasOwnProperty.call(ITEM_RATES, it.name)).forEach(it => bindItemRow(it.id));
   }
-  rerenderItems();
-  document.getElementById('addItemBtn').onclick = () => { formDraft.items.push(blankItem()); rerenderItems(); };
+  rerenderCustomItems();
+  document.getElementById('addItemBtn').onclick = () => { formDraft.items.push(blankItem()); rerenderCustomItems(); };
 
   // KYC
   document.getElementById('kycCameraBtn').onclick = () => document.getElementById('kycCameraInput').click();
@@ -839,14 +959,20 @@ function bindRentalFormEvents() {
   // save
   document.getElementById('saveRentalBtn').onclick = async () => {
     if (!formDraft.customerName.trim()) { toast('Please enter customer name.'); return; }
-    formDraft.items = formDraft.items.filter(i => i.name.trim());
-    if (!formDraft.items.length) { toast('Add at least one item.'); return; }
+    formDraft.items = formDraft.items.filter(i => i.name && i.name.trim() && Number(i.qty) > 0);
+    if (!formDraft.items.length) { toast('Add at least one item with quantity.'); return; }
+    if (!formDraft.invoiceNumber || !formDraft.invoiceNumber.trim()) formDraft.invoiceNumber = nextInvoiceNumber();
+    const isNew = !state.editingId;
     await dbPut('rentals', formDraft);
     const idx = state.rentals.findIndex(r => r.id === formDraft.id);
     if (idx >= 0) state.rentals[idx] = formDraft; else state.rentals.push(formDraft);
     await upsertCustomerFromRental(formDraft);
     for (const it of formDraft.items) await bumpFrequentItem(it.name);
     state.frequentItems = await dbGetAll('items');
+    if (isNew) {
+      registerInvoiceNumberUsed(formDraft.invoiceNumber);
+      await dbPut('settings', { key: 'main', value: state.settings });
+    }
     toast('Rental saved.');
     closeModal();
     route();
@@ -869,6 +995,7 @@ function rentalDetailHTML(r) {
   <div class="page-header"><h2>Rental Details</h2><button class="back-btn" id="closeDetail">✕</button></div>
   <div class="card">
     <div class="top"><div class="name">${escapeHtml(r.customerName)}</div><span class="badge ${badge.cls}">${badge.label}</span></div>
+    <div style="font-size:12px;color:var(--amber-dark);font-weight:700;margin-top:2px;">Invoice #${escapeHtml(r.invoiceNumber || '—')}</div>
     <div style="font-size:13px;line-height:1.8;margin-top:8px;">
       📞 <a href="tel:${r.customerMobile}">${escapeHtml(r.customerMobile || '—')}</a>${r.altMobile ? ' / ' + escapeHtml(r.altMobile) : ''}<br>
       📍 ${escapeHtml(r.customerAddress || '—')}<br>
@@ -881,7 +1008,7 @@ function rentalDetailHTML(r) {
   <div class="card">
     ${r.items.map(it => `
       <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px;">
-        <span>${escapeHtml(it.name)} × ${it.qty}${it.returnedQty ? ` (${it.returnedQty} returned)` : ''}</span>
+        <span>${escapeHtml(it.name)} × ${it.qty}</span>
         <span>${fmtMoney(itemTotal(it, r))}</span>
       </div>`).join('')}
   </div>
@@ -907,8 +1034,11 @@ function rentalDetailHTML(r) {
   </div>
 
   <div class="btn-row">
-    <button class="btn btn-ghost" id="whatsappBtn">💬 WhatsApp</button>
-    <button class="btn btn-ghost" id="invoiceBtn">🧾 Invoice</button>
+    <button class="btn btn-ghost" id="whatsappReceiptBtn">📩 WhatsApp Receipt</button>
+    <button class="btn btn-ghost" id="whatsappInvoiceBtn">🧾 WhatsApp Invoice</button>
+  </div>
+  <div class="btn-row">
+    <button class="btn btn-primary" id="printInvoiceBtn">🖨 Print / PDF Invoice</button>
   </div>
   <div class="btn-row">
     <button class="btn btn-outline" id="editRentalBtn">✏️ Edit</button>
@@ -922,40 +1052,80 @@ function kycThumbsViewHTML(kyc) {
   return kyc.map(k => `<div class="kyc-thumb">${k.type === 'application/pdf' ? `<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:26px;">📄</div>` : `<img src="${k.dataUrl}">`}<div class="lbl">${escapeHtml(k.name)}</div></div>`).join('');
 }
 
-function buildWhatsAppText(r) {
+/* WhatsApp message #1 — sent when items go out on rent */
+function buildReceiptText(r) {
   const s = state.settings;
-  const itemLines = r.items.map(i => `• ${i.name} x ${i.qty}`).join('\n');
-  const lines = [
-    `*${s.businessName}*`,
-    `_Rental Confirmation_`,
+  const itemLines = r.items.map(i => `• ${i.name}: ${i.qty} Nos.`).join('\n');
+  return [
+    `🧾 ${s.businessName.toUpperCase()}`,
+    `Rental Receipt`,
     ``,
-    `👤 *Name:* ${r.customerName}`,
-    `📍 *Delivery Address:* ${r.deliveryAddress || r.customerAddress || '—'}`,
-    `📅 *Date & Time:* ${fmtDateTime(r.date, r.time)}`,
+    `📅 Rental Date: ${fmtDate(r.date)}`,
+    `👤 Customer Name: ${r.customerName}`,
+    `📞 Mobile: ${r.customerMobile || '—'}`,
+    `📍 Delivery Address: ${r.deliveryAddress || r.customerAddress || '—'}`,
     ``,
-    `📦 *Items:*`,
+    `📦 Items Issued on Rent:`,
     itemLines,
     ``,
-    `💵 *Advance Paid:* ${fmtMoney(r.advanceAmount)}`,
+    `💰 Advance Paid: ${fmtMoney(r.advanceAmount)}`,
     ``,
-    `Thank you for choosing us! 🙏`,
-    `*${s.ownerName}*`,
+    `Thank you for choosing ${s.businessName}. We appreciate your trust and look forward to serving you again.`,
+    ``,
+    `━━━━━━━━━━━━━━━━━━━━`,
+    `👨‍💼 ${s.ownerName}`,
     `📞 ${s.phone}`,
-    `${s.businessName}, ${s.address}`
-  ];
-  return lines.join('\n');
+    `📍 ${s.address}`
+  ].join('\n');
+}
+
+/* WhatsApp message #2 — final invoice with balance */
+function buildInvoiceText(r) {
+  const s = state.settings;
+  const itemLines = r.items.map(i => `• ${i.name}: ${i.qty} Nos.`).join('\n');
+  const due = rentalDue(r);
+  return [
+    `🧾 ${s.businessName.toUpperCase()}`,
+    `Rental Invoice #${r.invoiceNumber || ''}`,
+    ``,
+    `👤 Customer Name: ${r.customerName}`,
+    `📞 Mobile: ${r.customerMobile || '—'}`,
+    `📍 Delivery Address: ${r.deliveryAddress || r.customerAddress || '—'}`,
+    ``,
+    `📦 Items Rented:`,
+    itemLines,
+    ``,
+    `📅 Rental Date: ${fmtDate(r.date)}`,
+    `📅 Return Date: ${r.actualReturnDate ? fmtDate(r.actualReturnDate) : 'Ongoing'}`,
+    `📆 Rental Period: ${rentalDays(r)} Days`,
+    ``,
+    `💰 Total Rental Charges: ${fmtMoney(rentalGrandTotal(r))}`,
+    `💵 Advance Paid: ${fmtMoney(rentalPaid(r))}`,
+    `💳 Balance Amount: ${fmtMoney(due)}`,
+    ``,
+    `✅ Payment Status: ${due <= 0 ? 'Paid' : 'Pending'}`,
+    ``,
+    `Thank you for choosing ${s.businessName}. We truly appreciate your business and look forward to serving you again.`,
+    ``,
+    `━━━━━━━━━━━━━━━━━━━━`,
+    `👨‍💼 ${s.ownerName}`,
+    `📞 ${s.phone}`,
+    `📍 ${s.address}`
+  ].join('\n');
+}
+
+function sendWhatsApp(r, text) {
+  const phone = (r.customerMobile || '').replace(/\D/g, '');
+  const url = `https://wa.me/${phone ? '91' + phone.slice(-10) : ''}?text=${encodeURIComponent(text)}`;
+  window.open(url, '_blank');
 }
 
 function bindRentalDetailEvents(r) {
   document.getElementById('closeDetail').onclick = closeModal;
   document.getElementById('editRentalBtn').onclick = () => { closeModal(); openRentalForm(r.id); };
-  document.getElementById('whatsappBtn').onclick = () => {
-    const text = buildWhatsAppText(r);
-    const phone = (r.customerMobile || '').replace(/\D/g, '');
-    const url = `https://wa.me/${phone ? '91' + phone.slice(-10) : ''}?text=${encodeURIComponent(text)}`;
-    window.open(url, '_blank');
-  };
-  document.getElementById('invoiceBtn').onclick = () => openInvoicePrint(r);
+  document.getElementById('whatsappReceiptBtn').onclick = () => sendWhatsApp(r, buildReceiptText(r));
+  document.getElementById('whatsappInvoiceBtn').onclick = () => sendWhatsApp(r, buildInvoiceText(r));
+  document.getElementById('printInvoiceBtn').onclick = () => openInvoicePrint(r);
   document.getElementById('addPaymentBtn').onclick = async () => {
     const amt = Number(document.getElementById('payAmount').value);
     if (!amt) { toast('Enter an amount.'); return; }
@@ -986,42 +1156,68 @@ function bindRentalDetailEvents(r) {
 function openInvoicePrint(r) {
   const s = state.settings;
   const w = window.open('', '_blank');
-  const rows = r.items.map(it => `<tr><td>${escapeHtml(it.name)}</td><td>${it.qty}</td><td>${fmtMoney(it.rentPerDay)}</td><td>${fmtMoney(itemTotal(it, r))}</td></tr>`).join('');
+  const rows = r.items.map((it, i) => `<tr style="background:${i % 2 ? '#fff7ec' : '#ffffff'}"><td>${escapeHtml(it.name)}</td><td style="text-align:center;">${it.qty}</td><td style="text-align:right;">${fmtMoney(it.rentPerDay)}</td><td style="text-align:right;">${fmtMoney(itemTotal(it, r))}</td></tr>`).join('');
+  const due = rentalDue(r);
   const stampSigBlock = `
     <div style="display:flex;justify-content:flex-end;gap:24px;margin-top:36px;align-items:flex-end;">
       ${s.stampImg ? `<img src="${s.stampImg}" style="max-height:90px;max-width:110px;opacity:.9;">` : ''}
       ${s.signatureImg ? `<div style="text-align:center;"><img src="${s.signatureImg}" style="max-height:60px;max-width:150px;display:block;margin:0 auto;"><div style="border-top:1px solid #333;font-size:11px;padding-top:3px;margin-top:2px;">Authorized Signature</div></div>` : ''}
     </div>`;
   w.document.write(`
-    <html><head><title>Invoice - ${escapeHtml(r.customerName)}</title>
+    <html><head><title>Invoice ${escapeHtml(r.invoiceNumber || '')} - ${escapeHtml(r.customerName)}</title>
     <style>
-      body{font-family:Arial,sans-serif;padding:24px;color:#161b33;}
-      h1{margin-bottom:0;} .sub{color:#666;margin-top:2px;}
-      table{width:100%;border-collapse:collapse;margin-top:16px;}
-      th,td{border:1px solid #ccc;padding:8px;text-align:left;font-size:13px;}
-      .totals{margin-top:14px;width:100%;max-width:300px;margin-left:auto;}
+      * { box-sizing: border-box; }
+      body{font-family:Arial,'Segoe UI',sans-serif;padding:0;margin:0;color:#161b33;background:#f3f4fa;}
+      .sheet{max-width:720px;margin:0 auto;background:#fff;}
+      .band{background:linear-gradient(135deg,#1e2952,#2b3968);color:#fff;padding:28px 32px 22px;position:relative;overflow:hidden;}
+      .band::after{content:'';position:absolute;right:-40px;top:-40px;width:160px;height:160px;background:rgba(245,158,11,.25);border-radius:50%;}
+      .band h1{margin:0;font-size:22px;letter-spacing:.3px;}
+      .band .sub{opacity:.85;font-size:12.5px;margin-top:4px;}
+      .invoice-tag{display:inline-block;background:#f59e0b;color:#2b1400;font-weight:800;font-size:12px;padding:4px 12px;border-radius:20px;margin-top:10px;}
+      .body{padding:24px 32px 8px;}
+      .meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 24px;background:#fff7ec;border:1px solid #f3d9ad;border-radius:10px;padding:14px 16px;margin-bottom:18px;font-size:13px;}
+      .meta-grid div span{display:block;color:#8a5a2b;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;font-weight:700;}
+      table{width:100%;border-collapse:collapse;margin-top:4px;border-radius:10px;overflow:hidden;}
+      th{background:#1e2952;color:#fff;padding:10px 8px;font-size:12px;text-align:left;}
+      th:nth-child(2){text-align:center;} th:nth-child(3),th:nth-child(4){text-align:right;}
+      td{padding:9px 8px;font-size:13px;border-bottom:1px solid #eee;}
+      .totals{margin-top:16px;width:100%;max-width:320px;margin-left:auto;background:#fff7ec;border:1px solid #f3d9ad;border-radius:10px;padding:14px 16px;}
       .totals div{display:flex;justify-content:space-between;padding:4px 0;font-size:13px;}
-      .totals .grand{font-weight:bold;font-size:15px;border-top:1px solid #333;padding-top:6px;}
-      .foot{margin-top:30px;font-size:12px;color:#666;}
+      .totals .grand{font-weight:800;font-size:16px;border-top:2px solid #f59e0b;padding-top:8px;margin-top:6px;color:#1e2952;}
+      .status{display:inline-block;margin-top:12px;font-weight:800;font-size:13px;padding:6px 14px;border-radius:20px;}
+      .status.paid{background:#dcfce7;color:#16a34a;} .status.pending{background:#fde2e2;color:#dc2626;}
+      .foot{margin:30px 32px 26px;font-size:12px;color:#666;border-top:1px dashed #ccc;padding-top:14px;}
+      @media print { body{background:#fff;} .sheet{max-width:100%;} }
     </style></head><body>
-    <h1>${escapeHtml(s.businessName)}</h1>
-    <div class="sub">${escapeHtml(s.address)} · ${escapeHtml(s.phone)}${s.gst ? ' · GST: ' + escapeHtml(s.gst) : ''}</div>
-    <hr>
-    <p><b>Customer:</b> ${escapeHtml(r.customerName)}<br>
-    <b>Mobile:</b> ${escapeHtml(r.customerMobile || '—')}<br>
-    <b>Address:</b> ${escapeHtml(r.customerAddress || '—')}<br>
-    <b>Rental Date:</b> ${fmtDateTime(r.date, r.time)} &nbsp; <b>Return:</b> ${r.actualReturnDate ? fmtDateTime(r.actualReturnDate, r.actualReturnTime) : 'Ongoing'}</p>
-    <table><thead><tr><th>Item</th><th>Qty</th><th>Rate/Day</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>
-    <div class="totals">
-      <div><span>Items Total</span><span>${fmtMoney(rentalItemsTotal(r))}</span></div>
-      <div><span>Old Dues</span><span>${fmtMoney(r.oldDues)}</span></div>
-      <div><span>Refund</span><span>-${fmtMoney(r.refundAmount)}</span></div>
-
-      <div><span>Advance Paid</span><span>-${fmtMoney(rentalPaid(r))}</span></div>
-      <div class="grand"><span>Balance Due</span><span>${fmtMoney(rentalDue(r))}</span></div>
+    <div class="sheet">
+      <div class="band">
+        <h1>${escapeHtml(s.businessName)}</h1>
+        <div class="sub">${escapeHtml(s.address)} · ${escapeHtml(s.phone)}${s.gst ? ' · GST: ' + escapeHtml(s.gst) : ''}</div>
+        <div class="invoice-tag">Invoice #${escapeHtml(r.invoiceNumber || '—')}</div>
+      </div>
+      <div class="body">
+        <div class="meta-grid">
+          <div><span>Customer</span>${escapeHtml(r.customerName)}</div>
+          <div><span>Mobile</span>${escapeHtml(r.customerMobile || '—')}</div>
+          <div><span>Address</span>${escapeHtml(r.customerAddress || '—')}</div>
+          <div><span>Delivery Address</span>${escapeHtml(r.deliveryAddress || '—')}</div>
+          <div><span>Rental Date</span>${fmtDate(r.date)}</div>
+          <div><span>Return Date</span>${r.actualReturnDate ? fmtDate(r.actualReturnDate) : 'Ongoing'}</div>
+          <div><span>Total Days</span>${rentalDays(r)}</div>
+        </div>
+        <table><thead><tr><th>Item</th><th>Qty</th><th>Rate/Day</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>
+        <div class="totals">
+          <div><span>Items Total</span><span>${fmtMoney(rentalItemsTotal(r))}</span></div>
+          <div><span>Old Dues</span><span>${fmtMoney(r.oldDues)}</span></div>
+          <div><span>Refund</span><span>-${fmtMoney(r.refundAmount)}</span></div>
+          <div><span>Advance Paid</span><span>-${fmtMoney(rentalPaid(r))}</span></div>
+          <div class="grand"><span>Balance Due</span><span>${fmtMoney(due)}</span></div>
+        </div>
+        <div class="status ${due <= 0 ? 'paid' : 'pending'}">${due <= 0 ? '✅ PAID' : '⏳ PENDING'}</div>
+        ${stampSigBlock}
+      </div>
+      <div class="foot">Thank you for your business.<br>${escapeHtml(s.ownerName)} · ${escapeHtml(s.phone)}</div>
     </div>
-    ${stampSigBlock}
-    <div class="foot">Thank you for your business.<br>${escapeHtml(s.ownerName)} · ${escapeHtml(s.phone)}</div>
     <script>window.onload = () => window.print();<\/script>
     </body></html>
   `);
@@ -1135,6 +1331,14 @@ function bindSettingsEvents() {
   document.getElementById('sigFile').addEventListener('change', (e) => { if (e.target.files[0]) readImageToSettings(e.target.files[0], 'signatureImg'); });
   document.getElementById('uploadStampBtn').onclick = () => document.getElementById('stampFile').click();
   document.getElementById('stampFile').addEventListener('change', (e) => { if (e.target.files[0]) readImageToSettings(e.target.files[0], 'stampImg'); });
+
+  document.getElementById('saveInvoiceNumBtn').onclick = async () => {
+    state.settings.invoicePrefix = document.getElementById('setInvoicePrefix').value.trim() || 'RR';
+    state.settings.invoiceCounter = Math.max(1, Number(document.getElementById('setInvoiceCounter').value) || 1);
+    await dbPut('settings', { key: 'main', value: state.settings });
+    toast('Invoice numbering updated.');
+    route();
+  };
 
   document.getElementById('pinToggle').onchange = (e) => {
     state.settings.pinEnabled = e.target.checked;
