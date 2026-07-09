@@ -18,6 +18,10 @@
   [data-theme="dark"]{
     --bg:#0b0e1f; --card:#161b33; --text:#eef0fb; --text-soft:#9ba1c2; --border:#252b4a;
   }
+  [data-theme="gray"]{
+    --bg:#eceef2; --card:#f7f8fa; --text:#2b2e38; --text-soft:#6b7280; --border:#d7dae0;
+    --indigo-900:#3f4756; --indigo-800:#4b5563;
+  }
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;height:100%;}
   body{
@@ -73,9 +77,9 @@
 
   nav.bottomnav{position:fixed;bottom:0;left:0;right:0;max-width:520px;margin:0 auto;background:var(--card);
     border-top:1px solid var(--border);display:flex;z-index:24;padding:6px 4px calc(6px + env(safe-area-inset-bottom));}
-  nav.bottomnav button{flex:1;background:none;border:none;color:var(--text-soft);font-size:10.5px;padding:6px 2px;
-    display:flex;flex-direction:column;align-items:center;gap:3px;font-family:inherit;}
-  nav.bottomnav button .ic{font-size:19px;}
+  nav.bottomnav button{flex:1;background:none;border:none;color:var(--text-soft);font-size:9.5px;padding:6px 1px;
+    display:flex;flex-direction:column;align-items:center;gap:2px;font-family:inherit;}
+  nav.bottomnav button .ic{font-size:17px;}
   nav.bottomnav button.active{color:var(--amber-dark);font-weight:700;}
 
   .empty{text-align:center;color:var(--text-soft);font-size:13px;padding:30px 10px;}
@@ -166,9 +170,12 @@
   <div id="lockscreen"></div>
   <header class="topbar">
     <div class="row1">
-      <div>
-        <h1 id="headerTitle">Roop Rental Services</h1>
-        <div class="sub" id="headerSub">Ahmedabad · Adil Ansari</div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <img id="headerLogo" style="display:none;height:38px;width:38px;object-fit:contain;border-radius:10px;background:#fff;padding:3px;">
+        <div>
+          <h1 id="headerTitle">Roop Rental Services</h1>
+          <div class="sub" id="headerSub">Ahmedabad · Adil Ansari</div>
+        </div>
       </div>
       <button class="icon-btn" id="themeToggle">🌙</button>
     </div>
@@ -182,6 +189,7 @@
     <button data-view="dashboard" class="active"><span class="ic">🏠</span>Home</button>
     <button data-view="rentals"><span class="ic">📦</span>Rentals</button>
     <button data-view="customers"><span class="ic">👥</span>Customers</button>
+    <button data-view="invoices"><span class="ic">🧾</span>Invoices</button>
     <button data-view="reports"><span class="ic">📊</span>Reports</button>
     <button data-view="settings"><span class="ic">⚙️</span>Settings</button>
   </nav>
