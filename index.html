@@ -33,16 +33,24 @@
 
   header.topbar{
     position:sticky;top:0;z-index:20;background:linear-gradient(135deg,var(--indigo-900),var(--indigo-800));
-    color:#fff;padding:16px 18px 20px;border-radius:0 0 22px 22px;box-shadow:0 6px 20px rgba(15,21,48,.25);
+    color:#fff;padding:14px 18px 16px;border-radius:0 0 20px 20px;box-shadow:0 6px 20px rgba(15,21,48,.25);
+    transition:padding .15s ease;
   }
+  header.topbar.collapsed{padding:8px 18px 10px;}
+  header.topbar.collapsed .row1{display:none;}
+  header.topbar.collapsed .search-bar{margin-top:0;}
   header.topbar .row1{display:flex;align-items:center;justify-content:space-between;}
-  header.topbar h1{font-size:17px;margin:0;font-weight:700;letter-spacing:.2px;}
-  header.topbar .sub{font-size:12px;opacity:.75;margin-top:2px;}
-  .icon-btn{background:rgba(255,255,255,.14);border:none;color:#fff;width:38px;height:38px;border-radius:12px;
-    display:flex;align-items:center;justify-content:center;font-size:18px;}
-  .search-bar{margin-top:14px;display:flex;gap:8px;}
-  .search-bar input{flex:1;border:none;border-radius:12px;padding:11px 14px;font-size:14px;background:rgba(255,255,255,.16);color:#fff;}
+  header.topbar h1{font-size:16px;margin:0;font-weight:700;letter-spacing:.2px;}
+  header.topbar .sub{font-size:11.5px;opacity:.75;margin-top:2px;}
+  .icon-btn{background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:11px;
+    display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;}
+  .search-bar{margin-top:12px;display:flex;gap:8px;align-items:center;}
+  .search-bar input{flex:1;border:none;border-radius:12px;padding:10px 14px;font-size:14px;background:rgba(255,255,255,.16);color:#fff;}
   .search-bar input::placeholder{color:rgba(255,255,255,.65);}
+  .time-picker{display:flex;align-items:center;gap:4px;}
+  .time-picker select{border:1px solid var(--border);border-radius:9px;padding:9px 4px;background:var(--card);color:var(--text);font-size:13px;}
+  .time-picker .tp-hour, .time-picker .tp-min{width:52px;}
+  .time-picker .tp-ampm{width:60px;}
 
   main{padding:14px 14px 10px;}
 
@@ -65,15 +73,24 @@
   .rental-card .name{font-weight:700;font-size:14.5px;}
   .rental-card .items{font-size:12.5px;color:var(--text-soft);margin-top:3px;}
   .rental-card .meta{font-size:11.5px;color:var(--text-soft);margin-top:6px;display:flex;gap:10px;flex-wrap:wrap;}
+  .compact-card{padding:9px 11px;margin-bottom:7px;}
+  .compact-card .name{font-size:13px;}
+  .compact-card .items{font-size:11.5px;margin-top:1px;}
+  .compact-card .meta{font-size:10.5px;margin-top:4px;gap:8px;}
+  .compact-card .badge{font-size:9.5px;padding:2px 7px;}
+  .compact-card .due-amt{font-size:12.5px;}
   .badge{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:20px;color:#fff;white-space:nowrap;}
   .badge.on{background:var(--green);} .badge.partial{background:var(--yellow);}
   .badge.returned{background:var(--red);} .badge.pending{background:var(--brown);} .badge.archived{background:var(--grey);}
+  .badge.draft{background:#8b5cf6;}
   .due-amt{font-weight:800;font-size:14px;color:var(--red);}
   .due-amt.clear{color:var(--green);}
 
   .fab{position:fixed;right:18px;bottom:86px;width:58px;height:58px;border-radius:50%;
     background:linear-gradient(135deg,var(--amber),#ea7c1f);color:#2b1400;border:none;font-size:28px;
-    box-shadow:0 8px 22px rgba(245,158,11,.45);z-index:25;max-width:520px;}
+    box-shadow:0 8px 22px rgba(245,158,11,.45);z-index:25;opacity:.62;transition:opacity .15s ease;touch-action:none;}
+  .fab:active{opacity:1;}
+  .fab.dragging{opacity:.85;box-shadow:0 4px 14px rgba(245,158,11,.3);}
 
   nav.bottomnav{position:fixed;bottom:0;left:0;right:0;max-width:520px;margin:0 auto;background:var(--card);
     border-top:1px solid var(--border);display:flex;z-index:24;padding:6px 4px calc(6px + env(safe-area-inset-bottom));}
@@ -177,7 +194,10 @@
           <div class="sub" id="headerSub">Ahmedabad · Adil Ansari</div>
         </div>
       </div>
-      <button class="icon-btn" id="themeToggle">🌙</button>
+      <div style="display:flex;gap:6px;">
+        <button class="icon-btn" id="headerCollapseBtn" title="Hide header for more space">⌃</button>
+        <button class="icon-btn" id="themeToggle">🌙</button>
+      </div>
     </div>
     <div class="search-bar">
       <input id="globalSearch" placeholder="Search customer, mobile, item, notes...">

@@ -93,6 +93,47 @@ function fmtDateTime(iso, time) {
 function combineDateTime(dateStr, timeStr) {
   return new Date(`${dateStr || todayISO()}T${timeStr || '00:00'}:00`);
 }
+
+/* 12-hour AM/PM time picker (native <input type=time> shows 24hr on many Android devices) */
+function time24to12(t) {
+  let [h, m] = (t || '00:00').split(':').map(Number);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  let h12 = h % 12; if (h12 === 0) h12 = 12;
+  return { h12, m, ampm };
+}
+function time12to24(h12, m, ampm) {
+  let h = Number(h12) % 12;
+  if (ampm === 'PM') h += 12;
+  return `${pad2(h)}:${pad2(m)}`;
+}
+function timePickerHTML(idPrefix, value24) {
+  const t = time24to12(value24);
+  const hours = Array.from({ length: 12 }, (_, i) => i + 1);
+  const mins = Array.from({ length: 60 }, (_, i) => i);
+  return `
+  <div class="time-picker">
+    <select class="tp-hour" id="${idPrefix}_h">${hours.map(h => `<option value="${h}" ${h === t.h12 ? 'selected' : ''}>${h}</option>`).join('')}</select>
+    <span>:</span>
+    <select class="tp-min" id="${idPrefix}_m">${mins.map(m => `<option value="${m}" ${m === t.m ? 'selected' : ''}>${pad2(m)}</option>`).join('')}</select>
+    <select class="tp-ampm" id="${idPrefix}_ap">
+      <option ${t.ampm === 'AM' ? 'selected' : ''}>AM</option>
+      <option ${t.ampm === 'PM' ? 'selected' : ''}>PM</option>
+    </select>
+  </div>`;
+}
+function readTimePicker(idPrefix) {
+  const h = Number(document.getElementById(idPrefix + '_h').value);
+  const m = Number(document.getElementById(idPrefix + '_m').value);
+  const ap = document.getElementById(idPrefix + '_ap').value;
+  return time12to24(h, m, ap);
+}
+function bindTimePicker(idPrefix, onChange) {
+  ['_h', '_m', '_ap'].forEach(suffix => {
+    const el = document.getElementById(idPrefix + suffix);
+    if (el) el.addEventListener('change', () => onChange(readTimePicker(idPrefix)));
+  });
+}
+
 function rentalDays(r) {
   const start = combineDateTime(r.date, r.time);
   const end = r.actualReturnDate ? combineDateTime(r.actualReturnDate, r.actualReturnTime) : new Date();
@@ -149,10 +190,13 @@ const state = {
     pinEnabled: false,
     invoiceCounter: 1,
     invoicePrefix: 'RR',
-    logoImg: ''
+    logoImg: '',
+    headerCollapsed: false,
+    fabPosition: null
   },
   searchQuery: '',
   filter: 'all',
+  invoiceFilter: 'all',
   sort: 'newest',
   editingId: null
 };
@@ -183,7 +227,7 @@ function rentalPaid(r) {
 }
 function rentalGrandTotal(r) {
   return rentalItemsTotal(r) + (Number(r.oldDues) || 0) - (Number(r.refundAmount) || 0)
-    + (Number(r.transportCharge) || 0) - (Number(r.discount) || 0);
+    + transportBilledTotal(r) - (Number(r.discount) || 0);
 }
 function rentalDue(r) {
   return Math.max(rentalGrandTotal(r) - rentalPaid(r), 0);
@@ -199,6 +243,7 @@ function itemReturnState(r) {
   return 'partial';
 }
 function rentalStatusBadge(r) {
+  if (r.isDraft) return { cls: 'draft', label: 'Draft' };
   if (r.archived) return { cls: 'archived', label: 'Archived' };
   const st = itemReturnState(r);
   const due = rentalDue(r);
@@ -271,7 +316,7 @@ function rentalCardHTML(r) {
   const names = (r.items || []).map(i => `${i.name} x${i.qty}`).filter(Boolean);
   const itemPreview = names.slice(0, 3).join(', ') + (names.length > 3 ? ` +${names.length - 3} more` : '') || '—';
   return `
-  <div class="card rental-card" data-open-rental="${r.id}">
+  <div class="card rental-card compact-card" data-open-rental="${r.id}">
     <div class="top">
       <div>
         <div class="name">${escapeHtml(r.customerName || 'No name')}</div>
@@ -294,13 +339,10 @@ function filterRentals() {
   let list = state.rentals.filter(r => {
     if (state.filter === 'trash') return r.deleted;
     if (r.deleted) return false;
-    if (state.filter === 'archived') return r.archived;
-    if (r.archived) return false;
-    if (state.filter === 'active') return itemReturnState(r) !== 'returned';
-    if (state.filter === 'returned') return itemReturnState(r) === 'returned';
-    if (state.filter === 'pending') return rentalDue(r) > 0;
-    if (state.filter === 'today') return r.date === todayISO();
-    return true;
+    if (state.filter === 'active') return itemReturnState(r) !== 'returned' && !r.archived;
+    if (state.filter === 'returned') return itemReturnState(r) === 'returned' && !r.archived;
+    if (state.filter === 'pending') return rentalDue(r) > 0 && !r.archived;
+    return true; // 'all' — everything not deleted, including archived
   });
   if (q) {
     list = list.filter(r => {
@@ -325,8 +367,7 @@ function filterRentals() {
 function renderRentals() {
   const list = filterRentals();
   const filters = [
-    ['all', 'All'], ['active', 'Active'], ['today', 'Today'], ['pending', 'Payment Pending'],
-    ['returned', 'Returned'], ['archived', 'Archived'], ['trash', 'Trash']
+    ['active', 'Rented'], ['returned', 'Returned'], ['pending', 'Payment Due'], ['trash', 'Trash'], ['all', 'All']
   ];
   const sorts = [['newest', 'Newest'], ['oldest', 'Oldest'], ['nameAZ', 'Name A-Z'], ['nameZA', 'Name Z-A'],
     ['highestDue', 'Highest Due'], ['lowestDue', 'Lowest Due'], ['returnDate', 'Return Date']];
@@ -354,10 +395,13 @@ function renderCustomers() {
     ${list.length ? list.map(c => {
       const rentals = state.rentals.filter(r => !r.deleted && (r.customerMobile === c.mobile || r.customerName === c.name));
       const totalDue = rentals.reduce((s, r) => s + rentalDue(r), 0);
-      return `<div class="card" data-open-customer="${c.id}">
+      return `<div class="card compact-card" data-open-customer="${c.id}">
         <div class="top">
-          <div><div class="name">${escapeHtml(c.name)}</div><div class="items">${escapeHtml(c.mobile || 'No mobile')}</div></div>
-          ${totalDue > 0 ? `<span class="due-amt">Due ${fmtMoney(totalDue)}</span>` : `<span class="due-amt clear">Clear</span>`}
+          <div>
+            <div class="name">${escapeHtml(c.name)}</div>
+            <div class="items">${escapeHtml(c.mobile || 'No mobile')}${c.address ? ' · ' + escapeHtml(truncate(c.address, 26)) : ''}</div>
+          </div>
+          ${totalDue > 0 ? `<span class="due-amt">Due ${fmtMoney(totalDue)}</span>` : `<span class="due-amt clear">Paid</span>`}
         </div>
         <div class="meta"><span>${rentals.length} rental${rentals.length !== 1 ? 's' : ''}</span></div>
       </div>`;
@@ -425,18 +469,24 @@ function renderInvoices() {
   if (q) {
     list = list.filter(r => (r.invoiceNumber || '').toLowerCase().includes(q) || (r.customerName || '').toLowerCase().includes(q));
   }
+  if (state.invoiceFilter === 'paid') list = list.filter(r => rentalDue(r) <= 0);
+  else if (state.invoiceFilter === 'due') list = list.filter(r => rentalDue(r) > 0);
   list.sort((a, b) => b.createdAt - a.createdAt);
   const totalDue = list.reduce((s, r) => s + rentalDue(r), 0);
+  const invFilters = [['all', 'All'], ['due', 'Due'], ['paid', 'Paid']];
   return `
     <div class="page-header"><h2>Invoices</h2></div>
     <div class="stat-grid" style="grid-template-columns:1fr 1fr;">
       <div class="stat-card" style="background:linear-gradient(135deg,#e0e7ff,#c7d2fe);"><div class="num" style="color:var(--indigo-900)">${list.length}</div><div class="lbl">Total Invoices</div></div>
       <div class="stat-card" style="background:linear-gradient(135deg,#fee2e2,#fecaca);"><div class="num" style="color:#b91c1c">${fmtMoney(totalDue)}</div><div class="lbl">Total Outstanding</div></div>
     </div>
+    <div class="filter-scroll">
+      ${invFilters.map(([v, l]) => `<div class="chip ${((state.invoiceFilter || 'all') === v) ? 'active' : ''}" data-invoice-filter="${v}">${l}</div>`).join('')}
+    </div>
     ${list.length ? list.map(r => {
       const due = rentalDue(r);
       const names = (r.items || []).map(i => `${i.name} x${i.qty}`).slice(0, 2).join(', ');
-      return `<div class="card" data-open-rental="${r.id}" style="cursor:pointer;">
+      return `<div class="card compact-card" data-open-rental="${r.id}" style="cursor:pointer;">
         <div class="top">
           <div>
             <div class="name">#${escapeHtml(r.invoiceNumber || '—')} · ${escapeHtml(r.customerName || 'No name')}</div>
@@ -609,11 +659,6 @@ function renderSettings() {
       </div>
     </div>
 
-    <div class="section-title">Frequent Items</div>
-    <div class="card">
-      <p style="font-size:12px;color:var(--text-soft);margin:0;">${state.frequentItems.length ? state.frequentItems.map(i => escapeHtml(i.name)).join(', ') : 'None yet — items you use in rentals will appear here.'}</p>
-    </div>
-
     <div style="text-align:center;color:var(--text-soft);font-size:11px;margin-top:20px;">Roop Rental Services App · v1.0</div>
   `;
 }
@@ -626,17 +671,25 @@ function newBlankRental() {
     id: uid(), createdAt: Date.now(),
     invoiceNumber: nextInvoiceNumber(),
     invoiceDate: todayISO(),
-    date: todayISO(), time: new Date().toTimeString().slice(0, 5),
-    customerName: '', customerMobile: '', altMobile: '', customerAddress: '', deliveryAddress: '',
-    transportMode: '', transporterName: '', transporterMobile: '', transportCharge: 0,
+    date: todayISO(), time: '10:00',
+    customerName: '', customerInvoiceName: '', customerMobile: '', altMobile: '', customerAddress: '', deliveryAddress: '',
+    transportMode: '', transporterName: '', transporterMobile: '', vehicleNumber: '',
+    transportChargeDelivery: 0, transportDeliveryPaidBy: 'party',
+    transportChargePickup: 0, transportPickupPaidBy: 'party',
     items: [],
     advanceAmount: 0, advanceMode: 'Cash', refundAmount: 0, oldDues: 0, discount: 0, notes: '',
-    actualReturnDate: '', actualReturnTime: '',
-    payments: [], kyc: [], archived: false, deleted: false
+    actualReturnDate: '', actualReturnTime: '22:00',
+    payments: [], kyc: [], archived: false, deleted: false, isDraft: false
   };
 }
 function blankItem() {
   return { id: uid(), name: '', qty: 1, rentPerDay: 0, returnedQty: 0 };
+}
+function transportBilledTotal(r) {
+  let t = 0;
+  if (r.transportDeliveryPaidBy === 'me') t += Number(r.transportChargeDelivery) || 0;
+  if (r.transportPickupPaidBy === 'me') t += Number(r.transportChargePickup) || 0;
+  return t;
 }
 
 function openRentalForm(existingId) {
@@ -644,6 +697,7 @@ function openRentalForm(existingId) {
   state.editingId = existingId || null;
   renderModal(rentalFormHTML());
   bindRentalFormEvents();
+  pushModalHistory();
 }
 
 function rentalFormHTML() {
@@ -667,6 +721,7 @@ function rentalFormHTML() {
     <input id="f_customerName" value="${escapeHtml(r.customerName)}" autocomplete="off" placeholder="Type to search saved customers">
     <div id="custAutofill"></div>
   </div>
+  <div class="field"><label>Name for Invoice <span style="font-weight:400;color:var(--text-soft);">(if different)</span></label><input id="f_customerInvoiceName" value="${escapeHtml(r.customerInvoiceName || '')}" placeholder="Leave blank to use Customer Name above"></div>
   <div class="field-row">
     <div class="field"><label>Mobile</label><input id="f_customerMobile" value="${escapeHtml(r.customerMobile)}" inputmode="tel"></div>
     <div class="field"><label>Alt. Mobile</label><input id="f_altMobile" value="${escapeHtml(r.altMobile)}" inputmode="tel"></div>
@@ -683,18 +738,31 @@ function rentalFormHTML() {
     <div class="field"><label>Transporter Name</label><input id="f_transporterName" value="${escapeHtml(r.transporterName)}"></div>
     <div class="field"><label>Transporter Mobile</label><input id="f_transporterMobile" value="${escapeHtml(r.transporterMobile)}" inputmode="tel"></div>
   </div>
-  <div class="field"><label>Transportation Charge</label><input id="f_transportCharge" type="number" value="${r.transportCharge || 0}"></div>
+  <div class="field"><label>Vehicle Number</label><input id="f_vehicleNumber" value="${escapeHtml(r.vehicleNumber || '')}" placeholder="e.g. GJ01AB1234"></div>
+
+  <div class="field"><label>Transportation Charge — Delivery</label><input id="f_transportChargeDelivery" type="number" value="${r.transportChargeDelivery || 0}"></div>
+  <div class="chip-row" id="deliveryPaidByChips">
+    <div class="chip ${r.transportDeliveryPaidBy === 'me' ? 'active' : ''}" data-paidby-group="delivery" data-paidby-val="me">Paid by Me</div>
+    <div class="chip ${r.transportDeliveryPaidBy !== 'me' ? 'active' : ''}" data-paidby-group="delivery" data-paidby-val="party">Paid by Party</div>
+  </div>
+
+  <div class="field"><label>Transportation Charge — Pickup</label><input id="f_transportChargePickup" type="number" value="${r.transportChargePickup || 0}"></div>
+  <div class="chip-row" id="pickupPaidByChips">
+    <div class="chip ${r.transportPickupPaidBy === 'me' ? 'active' : ''}" data-paidby-group="pickup" data-paidby-val="me">Paid by Me</div>
+    <div class="chip ${r.transportPickupPaidBy !== 'me' ? 'active' : ''}" data-paidby-group="pickup" data-paidby-val="party">Paid by Party</div>
+  </div>
+  <div style="font-size:11.5px;color:var(--text-soft);margin:-4px 0 12px;">"Paid by Me" charges are added to the customer's bill automatically. "Paid by Party" is just for your record and isn't billed.</div>
 
   <div class="section-title">Rental Date &amp; Time</div>
   <div class="field-row">
     <div class="field"><label>Rental Date</label><input id="f_date" type="date" value="${r.date}"></div>
-    <div class="field"><label>Time</label><input id="f_time" type="time" value="${r.time || ''}"></div>
+    <div class="field"><label>Time</label>${timePickerHTML('f_time_tp', r.time || '10:00')}</div>
   </div>
 
-  <div class="section-title">Actual Return</div>
+  <div class="section-title">Return Date &amp; Time</div>
   <div class="field-row">
     <div class="field"><label>Return Date</label><input id="f_actualReturn" type="date" value="${r.actualReturnDate || ''}"></div>
-    <div class="field"><label>Return Time</label><input id="f_actualReturnTime" type="time" value="${r.actualReturnTime || ''}"></div>
+    <div class="field"><label>Return Time</label>${timePickerHTML('f_retTime_tp', r.actualReturnTime || '22:00')}</div>
   </div>
   <div style="font-size:12px;color:var(--text-soft);margin:-6px 0 12px;">Rental Days (auto-calculated): <b id="rentalDaysDisplay">${rentalDays(r)}</b>${r.actualReturnDate ? '' : ' (still ongoing — counted till today)'}</div>
 
@@ -722,7 +790,7 @@ function rentalFormHTML() {
 
   <div class="totals-box" id="totalsBox">
     <div class="row"><span>Items Total</span><span>${fmtMoney(totalItems)}</span></div>
-    <div class="row"><span>+ Transportation</span><span>${fmtMoney(r.transportCharge)}</span></div>
+    <div class="row"><span>+ Transportation (billed)</span><span>${fmtMoney(transportBilledTotal(r))}</span></div>
     <div class="row"><span>- Discount</span><span>${fmtMoney(r.discount)}</span></div>
     <div class="row"><span>+ Old Dues</span><span>${fmtMoney(r.oldDues)}</span></div>
     <div class="row"><span>- Refund</span><span>${fmtMoney(r.refundAmount)}</span></div>
@@ -747,16 +815,16 @@ function rentalFormHTML() {
 }
 
 function standardItemsHTML(items) {
-  return Object.keys(ITEM_RATES).map(name => {
+  return Object.keys(ITEM_RATES).map((name, idx) => {
     const entry = (items || []).find(it => it.name === name);
     const qty = entry ? entry.qty : '';
     const rate = entry ? entry.rentPerDay : ITEM_RATES[name];
     return `
     <div class="std-item-row" data-std-name="${escapeHtml(name)}">
       <div class="std-item-label">${escapeHtml(name)}</div>
-      <input type="number" class="std-qty" min="0" placeholder="0" value="${qty}">
-      <span class="std-x">×</span>
       <input type="number" class="std-rate" value="${rate}">
+      <span class="std-x">×</span>
+      <input type="number" class="std-qty" data-qty-idx="${idx}" min="0" placeholder="0" value="${qty}" inputmode="numeric">
     </div>`;
   }).join('');
 }
@@ -800,6 +868,30 @@ function itemSuggestionsHTML() {
 }
 
 /* ---------- Modal ---------- */
+let modalHistoryActive = false;
+function pushModalHistory() {
+  if (!modalHistoryActive) {
+    history.pushState({ modal: true }, '');
+    modalHistoryActive = true;
+  }
+}
+function popModalHistoryIfNeeded() {
+  if (modalHistoryActive) {
+    modalHistoryActive = false;
+    history.replaceState({ modal: false }, '');
+  }
+}
+async function saveDraftSilently(draft) {
+  if (!draft) return;
+  const hasContent = (draft.customerName && draft.customerName.trim()) || (draft.items && draft.items.length > 0);
+  if (!hasContent) return;
+  draft.isDraft = true;
+  await dbPut('rentals', draft);
+  const idx = state.rentals.findIndex(r => r.id === draft.id);
+  if (idx >= 0) state.rentals[idx] = draft; else state.rentals.push(draft);
+  toast('Back pressed — draft saved automatically. Find it in Rentals to finish later.');
+}
+
 function renderModal(innerHTML) {
   const root = document.getElementById('modalRoot');
   root.innerHTML = `<div class="modal-overlay" id="modalOverlay"><div class="modal-sheet">${itemSuggestionsHTML()}${innerHTML}</div></div>`;
@@ -808,8 +900,26 @@ function renderModal(innerHTML) {
   });
 }
 function closeModal() {
+  popModalHistoryIfNeeded();
   document.getElementById('modalRoot').innerHTML = '';
   formDraft = null;
+}
+
+function showNumberPickerModal(numbers, onPick) {
+  const div = document.createElement('div');
+  div.className = 'modal-overlay';
+  div.style.zIndex = '90';
+  div.innerHTML = `<div class="modal-sheet" style="max-height:50vh;">
+    <div class="modal-handle"></div>
+    <div class="page-header"><h2>Select Number</h2></div>
+    ${numbers.map(n => `<div class="card" data-num="${escapeHtml(n)}" style="cursor:pointer;">${escapeHtml(n)}</div>`).join('')}
+  </div>`;
+  document.body.appendChild(div);
+  div.addEventListener('click', (e) => {
+    if (e.target === div) { div.remove(); return; }
+    const numDiv = e.target.closest('[data-num]');
+    if (numDiv) { onPick(numDiv.dataset.num); div.remove(); }
+  });
 }
 
 function refreshFormTotals() {
@@ -821,7 +931,7 @@ function refreshFormTotals() {
   const due = Math.max(grand - paid, 0);
   box.innerHTML = `
     <div class="row"><span>Items Total</span><span>${fmtMoney(totalItems)}</span></div>
-    <div class="row"><span>+ Transportation</span><span>${fmtMoney(formDraft.transportCharge)}</span></div>
+    <div class="row"><span>+ Transportation (billed)</span><span>${fmtMoney(transportBilledTotal(formDraft))}</span></div>
     <div class="row"><span>- Discount</span><span>${fmtMoney(formDraft.discount)}</span></div>
     <div class="row"><span>+ Old Dues</span><span>${fmtMoney(formDraft.oldDues)}</span></div>
     <div class="row"><span>- Refund</span><span>${fmtMoney(formDraft.refundAmount)}</span></div>
@@ -836,14 +946,16 @@ function bindRentalFormEvents() {
   document.getElementById('cancelFormBtn').onclick = closeModal;
 
   const simpleFields = {
-    f_invoiceNumber: 'invoiceNumber', f_invoiceDate: 'invoiceDate', f_customerName: 'customerName', f_customerMobile: 'customerMobile', f_altMobile: 'altMobile',
+    f_invoiceNumber: 'invoiceNumber', f_invoiceDate: 'invoiceDate', f_customerName: 'customerName', f_customerInvoiceName: 'customerInvoiceName',
+    f_customerMobile: 'customerMobile', f_altMobile: 'altMobile',
     f_customerAddress: 'customerAddress', f_deliveryAddress: 'deliveryAddress', f_transportMode: 'transportMode',
-    f_transporterName: 'transporterName', f_transporterMobile: 'transporterMobile', f_transportCharge: 'transportCharge', f_date: 'date', f_time: 'time',
-    f_actualReturn: 'actualReturnDate', f_actualReturnTime: 'actualReturnTime', f_advance: 'advanceAmount',
+    f_transporterName: 'transporterName', f_transporterMobile: 'transporterMobile', f_vehicleNumber: 'vehicleNumber',
+    f_transportChargeDelivery: 'transportChargeDelivery', f_transportChargePickup: 'transportChargePickup',
+    f_date: 'date', f_actualReturn: 'actualReturnDate', f_advance: 'advanceAmount',
     f_advanceMode: 'advanceMode', f_oldDues: 'oldDues', f_refund: 'refundAmount', f_discount: 'discount', f_notes: 'notes'
   };
-  const dateFields = ['f_date', 'f_time', 'f_actualReturn', 'f_actualReturnTime'];
-  const totalsFields = ['f_advance', 'f_oldDues', 'f_refund', 'f_transportCharge', 'f_discount'];
+  const dateFields = ['f_date', 'f_actualReturn'];
+  const totalsFields = ['f_advance', 'f_oldDues', 'f_refund', 'f_discount', 'f_transportChargeDelivery', 'f_transportChargePickup'];
   Object.entries(simpleFields).forEach(([id, key]) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -854,8 +966,29 @@ function bindRentalFormEvents() {
     });
   });
 
+  bindTimePicker('f_time_tp', (val) => { formDraft.time = val; refreshAll(); });
+  bindTimePicker('f_retTime_tp', (val) => { formDraft.actualReturnTime = val; refreshAll(); });
+
+  document.querySelectorAll('[data-paidby-group]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const group = chip.dataset.paidbyGroup;
+      const val = chip.dataset.paidbyVal;
+      if (group === 'delivery') formDraft.transportDeliveryPaidBy = val;
+      else formDraft.transportPickupPaidBy = val;
+      document.querySelectorAll(`[data-paidby-group="${group}"]`).forEach(c => c.classList.toggle('active', c.dataset.paidbyVal === val));
+      refreshFormTotals();
+    });
+  });
+
   // customer autofill
   const nameInput = document.getElementById('f_customerName');
+  function applyCustomerMatch(c) {
+    formDraft.customerName = c.name; formDraft.customerMobile = c.mobile || ''; formDraft.altMobile = c.altMobile || ''; formDraft.customerAddress = c.address || '';
+    nameInput.value = c.name;
+    document.getElementById('f_customerMobile').value = c.mobile || '';
+    document.getElementById('f_altMobile').value = c.altMobile || '';
+    document.getElementById('f_customerAddress').value = c.address || '';
+  }
   nameInput.addEventListener('input', () => {
     const q = nameInput.value.trim().toLowerCase();
     const box = document.getElementById('custAutofill');
@@ -866,14 +999,23 @@ function bindRentalFormEvents() {
     box.querySelectorAll('[data-pick-cust]').forEach(el => {
       el.addEventListener('click', () => {
         const c = state.customers.find(x => x.id === el.dataset.pickCust);
-        formDraft.customerName = c.name; formDraft.customerMobile = c.mobile || ''; formDraft.altMobile = c.altMobile || ''; formDraft.customerAddress = c.address || '';
-        nameInput.value = c.name;
-        document.getElementById('f_customerMobile').value = c.mobile || '';
-        document.getElementById('f_altMobile').value = c.altMobile || '';
-        document.getElementById('f_customerAddress').value = c.address || '';
+        applyCustomerMatch(c);
         box.innerHTML = '';
       });
     });
+  });
+
+  // autofill by mobile number when typed manually
+  const mobileInput = document.getElementById('f_customerMobile');
+  mobileInput.addEventListener('input', () => {
+    const digits = mobileInput.value.replace(/\D/g, '');
+    if (digits.length < 10) return;
+    const last10 = digits.slice(-10);
+    const match = state.customers.find(c => (c.mobile || '').replace(/\D/g, '').slice(-10) === last10);
+    if (match && !nameInput.value.trim()) {
+      applyCustomerMatch(match);
+      toast('Auto-filled from saved customer.');
+    }
   });
 
   // contact picker (supported on some Android Chrome versions)
@@ -888,9 +1030,18 @@ function bindRentalFormEvents() {
       if (contacts && contacts[0]) {
         const c = contacts[0];
         formDraft.customerName = (c.name && c.name[0]) || formDraft.customerName;
-        formDraft.customerMobile = (c.tel && c.tel[0]) || formDraft.customerMobile;
         document.getElementById('f_customerName').value = formDraft.customerName;
-        document.getElementById('f_customerMobile').value = formDraft.customerMobile;
+        const nums = (c.tel || []).filter(Boolean);
+        if (nums.length > 1) {
+          showNumberPickerModal(nums, (chosen) => {
+            formDraft.customerMobile = chosen;
+            document.getElementById('f_customerMobile').value = chosen;
+          });
+        } else if (nums.length === 1) {
+          formDraft.customerMobile = nums[0];
+          document.getElementById('f_customerMobile').value = nums[0];
+        }
+        toast('Tip: edit "Name for Invoice" above if this contact name isn\'t how it should print.');
       }
     } catch (e) { toast('Contact pick cancelled.'); }
   };
@@ -912,6 +1063,15 @@ function bindRentalFormEvents() {
     qtyInput.addEventListener('input', () => {
       setStandardItem(name, Number(qtyInput.value) || 0, Number(rateInput.value) || 0);
       refreshFormTotals();
+    });
+    qtyInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const nextIdx = Number(qtyInput.dataset.qtyIdx) + 1;
+        const next = document.querySelector(`.std-qty[data-qty-idx="${nextIdx}"]`);
+        if (next) { next.focus(); next.select(); }
+        else qtyInput.blur();
+      }
     });
     rateInput.addEventListener('input', () => {
       if (Number(qtyInput.value) > 0) setStandardItem(name, Number(qtyInput.value), Number(rateInput.value) || 0);
@@ -995,6 +1155,7 @@ function bindRentalFormEvents() {
     formDraft.items = formDraft.items.filter(i => i.name && i.name.trim() && Number(i.qty) > 0);
     if (!formDraft.items.length) { toast('Add at least one item with quantity.'); return; }
     if (!formDraft.invoiceNumber || !formDraft.invoiceNumber.trim()) formDraft.invoiceNumber = nextInvoiceNumber();
+    formDraft.isDraft = false;
     const isNew = !state.editingId;
     await dbPut('rentals', formDraft);
     const idx = state.rentals.findIndex(r => r.id === formDraft.id);
@@ -1018,6 +1179,7 @@ function openRentalDetail(id) {
   if (!r) return;
   renderModal(rentalDetailHTML(r));
   bindRentalDetailEvents(r);
+  pushModalHistory();
 }
 
 function rentalDetailHTML(r) {
@@ -1049,7 +1211,7 @@ function rentalDetailHTML(r) {
   </div>
   <div class="totals-box">
     <div class="row"><span>Items Total</span><span>${fmtMoney(rentalItemsTotal(r))}</span></div>
-    <div class="row"><span>+ Transportation</span><span>${fmtMoney(r.transportCharge)}</span></div>
+    <div class="row"><span>+ Transportation (billed)</span><span>${fmtMoney(transportBilledTotal(r))}</span></div>
     <div class="row"><span>- Discount</span><span>${fmtMoney(r.discount)}</span></div>
     <div class="row"><span>+ Old Dues</span><span>${fmtMoney(r.oldDues)}</span></div>
     <div class="row"><span>- Refund</span><span>${fmtMoney(r.refundAmount)}</span></div>
@@ -1082,7 +1244,11 @@ function rentalDetailHTML(r) {
 
   <div class="btn-row">
     <button class="btn btn-ghost" id="whatsappReceiptBtn">📩 WhatsApp Receipt</button>
+    <button class="btn btn-ghost btn-sm" id="copyReceiptBtn" title="Copy for a normal text message" style="flex:0 0 auto;">📋</button>
+  </div>
+  <div class="btn-row">
     <button class="btn btn-ghost" id="whatsappInvoiceBtn">🧾 WhatsApp Invoice</button>
+    <button class="btn btn-ghost btn-sm" id="copyInvoiceBtn" title="Copy for a normal text message" style="flex:0 0 auto;">📋</button>
   </div>
   <div class="btn-row">
     <button class="btn btn-primary" id="printInvoiceBtn">🖨 Print / PDF Invoice</button>
@@ -1111,7 +1277,7 @@ function buildReceiptText(r) {
     `Rental Receipt`,
     ``,
     `📅 Rental Date: ${fmtDate(r.date)}`,
-    `👤 Customer Name: ${r.customerName}`,
+    `👤 Customer Name: ${r.customerInvoiceName || r.customerName}`,
     `📞 Mobile: ${r.customerMobile || '—'}`,
     `📍 Delivery Address: ${r.deliveryAddress || r.customerAddress || '—'}`,
     ``,
@@ -1138,7 +1304,7 @@ function buildInvoiceText(r) {
     `🧾 ${s.businessName.toUpperCase()}`,
     `Rental Invoice #${r.invoiceNumber || ''}`,
     ``,
-    `👤 Customer Name: ${r.customerName}`,
+    `👤 Customer Name: ${r.customerInvoiceName || r.customerName}`,
     `📞 Mobile: ${r.customerMobile || '—'}`,
     `📍 Delivery Address: ${r.deliveryAddress || r.customerAddress || '—'}`,
     ``,
@@ -1170,11 +1336,33 @@ function sendWhatsApp(r, text) {
   window.open(url, '_blank');
 }
 
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('Copied — paste it into any messaging app.');
+  } catch (e) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed'; ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.focus(); ta.select();
+      document.execCommand('copy');
+      ta.remove();
+      toast('Copied — paste it into any messaging app.');
+    } catch (e2) {
+      toast('Could not copy automatically — please select and copy manually.');
+    }
+  }
+}
+
 function bindRentalDetailEvents(r) {
   document.getElementById('closeDetail').onclick = closeModal;
   document.getElementById('editRentalBtn').onclick = () => { closeModal(); openRentalForm(r.id); };
   document.getElementById('whatsappReceiptBtn').onclick = () => sendWhatsApp(r, buildReceiptText(r));
   document.getElementById('whatsappInvoiceBtn').onclick = () => sendWhatsApp(r, buildInvoiceText(r));
+  document.getElementById('copyReceiptBtn').onclick = () => copyToClipboard(buildReceiptText(r));
+  document.getElementById('copyInvoiceBtn').onclick = () => copyToClipboard(buildInvoiceText(r));
   document.getElementById('printInvoiceBtn').onclick = () => openInvoicePrint(r);
   document.getElementById('duplicateRentalBtn').onclick = () => {
     closeModal();
@@ -1184,13 +1372,14 @@ function bindRentalDetailEvents(r) {
     formDraft.invoiceNumber = nextInvoiceNumber();
     formDraft.invoiceDate = todayISO();
     formDraft.date = todayISO();
-    formDraft.time = new Date().toTimeString().slice(0, 5);
-    formDraft.actualReturnDate = ''; formDraft.actualReturnTime = '';
+    formDraft.time = '10:00';
+    formDraft.actualReturnDate = ''; formDraft.actualReturnTime = '22:00';
     formDraft.advanceAmount = 0; formDraft.refundAmount = 0; formDraft.payments = [];
-    formDraft.kyc = []; formDraft.archived = false; formDraft.deleted = false;
+    formDraft.kyc = []; formDraft.archived = false; formDraft.deleted = false; formDraft.isDraft = false;
     state.editingId = null;
     renderModal(rentalFormHTML());
     bindRentalFormEvents();
+    pushModalHistory();
     toast('Duplicated — review and save as a new rental.');
   };
   document.getElementById('addPaymentBtn').onclick = async () => {
@@ -1271,10 +1460,11 @@ function openInvoicePrint(r) {
       </div>
       <div class="body">
         <div class="meta-grid">
-          <div><span>Customer</span>${escapeHtml(r.customerName)}</div>
+          <div><span>Customer</span>${escapeHtml(r.customerInvoiceName || r.customerName)}</div>
           <div><span>Mobile</span>${escapeHtml(r.customerMobile || '—')}</div>
           <div><span>Address</span>${escapeHtml(r.customerAddress || '—')}</div>
           <div><span>Delivery Address</span>${escapeHtml(r.deliveryAddress || '—')}</div>
+          ${r.vehicleNumber ? `<div><span>Vehicle Number</span>${escapeHtml(r.vehicleNumber)}</div>` : ''}
           <div><span>Invoice Date</span>${fmtDate(r.invoiceDate || r.date)}</div>
           <div><span>Rental Date</span>${fmtDate(r.date)}</div>
           <div><span>Return Date</span>${r.actualReturnDate ? fmtDate(r.actualReturnDate) : 'Ongoing'}</div>
@@ -1283,7 +1473,7 @@ function openInvoicePrint(r) {
         <table><thead><tr><th>Item</th><th>Qty</th><th>Rate/Day</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>
         <div class="totals">
           <div><span>Items Total</span><span>${fmtMoney(rentalItemsTotal(r))}</span></div>
-          ${Number(r.transportCharge) > 0 ? `<div><span>Transportation</span><span>${fmtMoney(r.transportCharge)}</span></div>` : ''}
+          ${transportBilledTotal(r) > 0 ? `<div><span>Transportation</span><span>${fmtMoney(transportBilledTotal(r))}</span></div>` : ''}
           ${Number(r.discount) > 0 ? `<div><span>Discount</span><span>-${fmtMoney(r.discount)}</span></div>` : ''}
           <div><span>Advance Paid</span><span>-${fmtMoney(rentalPaid(r))}</span></div>
           <div class="grand"><span>Balance Due</span><span>${fmtMoney(due)}</span></div>
@@ -1499,6 +1689,9 @@ function bindMainEvents() {
   document.querySelectorAll('[data-filter]').forEach(el => {
     el.addEventListener('click', () => { state.filter = el.dataset.filter; route(); });
   });
+  document.querySelectorAll('[data-invoice-filter]').forEach(el => {
+    el.addEventListener('click', () => { state.invoiceFilter = el.dataset.invoiceFilter; route(); });
+  });
   const sortSelect = document.getElementById('sortSelect');
   if (sortSelect) sortSelect.addEventListener('change', (e) => { state.sort = e.target.value; route(); });
 }
@@ -1531,7 +1724,6 @@ async function init() {
       route();
     });
   });
-  document.getElementById('fabAdd').addEventListener('click', () => openRentalForm(null));
   document.getElementById('themeToggle').addEventListener('click', () => {
     const order = ['light', 'dark', 'gray'];
     const idx = order.indexOf(state.settings.theme);
@@ -1543,6 +1735,70 @@ async function init() {
     state.searchQuery = e.target.value;
     if (state.view === 'dashboard') { state.view = 'rentals'; state.filter = 'all'; }
     route();
+  });
+
+  // header collapse toggle (more room to work with)
+  const headerEl = document.querySelector('header.topbar');
+  const collapseBtn = document.getElementById('headerCollapseBtn');
+  function applyHeaderCollapse() {
+    headerEl.classList.toggle('collapsed', !!state.settings.headerCollapsed);
+    collapseBtn.textContent = state.settings.headerCollapsed ? '⌄' : '⌃';
+  }
+  applyHeaderCollapse();
+  collapseBtn.addEventListener('click', () => {
+    state.settings.headerCollapsed = !state.settings.headerCollapsed;
+    applyHeaderCollapse();
+    dbPut('settings', { key: 'main', value: state.settings });
+  });
+
+  // FAB: draggable + semi-transparent so it never permanently blocks content
+  const fab = document.getElementById('fabAdd');
+  if (state.settings.fabPosition) {
+    fab.style.left = state.settings.fabPosition.x + 'px';
+    fab.style.top = state.settings.fabPosition.y + 'px';
+    fab.style.right = 'auto'; fab.style.bottom = 'auto';
+  }
+  let dragging = false, moved = false, startX = 0, startY = 0, startLeft = 0, startTop = 0;
+  fab.addEventListener('pointerdown', (e) => {
+    dragging = true; moved = false;
+    const rect = fab.getBoundingClientRect();
+    startX = e.clientX; startY = e.clientY; startLeft = rect.left; startTop = rect.top;
+    fab.setPointerCapture(e.pointerId);
+  });
+  fab.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - startX, dy = e.clientY - startY;
+    if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
+      moved = true;
+      fab.classList.add('dragging');
+      let newLeft = Math.min(Math.max(startLeft + dx, 4), window.innerWidth - fab.offsetWidth - 4);
+      let newTop = Math.min(Math.max(startTop + dy, 4), window.innerHeight - fab.offsetHeight - 4);
+      fab.style.left = newLeft + 'px'; fab.style.top = newTop + 'px';
+      fab.style.right = 'auto'; fab.style.bottom = 'auto';
+    }
+  });
+  fab.addEventListener('pointerup', (e) => {
+    dragging = false;
+    fab.classList.remove('dragging');
+    if (moved) {
+      state.settings.fabPosition = { x: parseFloat(fab.style.left), y: parseFloat(fab.style.top) };
+      dbPut('settings', { key: 'main', value: state.settings });
+    }
+  });
+  fab.addEventListener('click', (e) => {
+    if (moved) { e.preventDefault(); e.stopPropagation(); moved = false; return; }
+    openRentalForm(null);
+  });
+
+  // Hardware/browser back button: auto-save draft instead of losing data
+  window.addEventListener('popstate', async () => {
+    modalHistoryActive = false;
+    const draftToSave = formDraft;
+    formDraft = null;
+    document.getElementById('modalRoot').innerHTML = '';
+    document.querySelectorAll('.modal-overlay').forEach(el => { if (el.parentElement === document.body) el.remove(); });
+    route();
+    if (draftToSave) await saveDraftSilently(draftToSave);
   });
 
   route();
