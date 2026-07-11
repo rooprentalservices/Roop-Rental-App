@@ -192,7 +192,16 @@ const state = {
     invoicePrefix: 'RR',
     logoImg: '',
     headerCollapsed: false,
-    fabPosition: null
+    fabPosition: null,
+    invoiceTerms: [
+      'Rental charges are calculated from the delivery date until the actual return date.',
+      'The customer is responsible for any loss, theft, or damage to rented items.',
+      'Any damaged or missing item will be charged at replacement or repair cost.',
+      'Transportation charges, if applicable, are payable by the customer.',
+      'Payment is due as per the agreed rental terms.',
+      'Subject to Ahmedabad, Gujarat jurisdiction only.',
+      'Kindly preserve this invoice for future reference.'
+    ]
   },
   searchQuery: '',
   filter: 'all',
@@ -261,14 +270,20 @@ async function upsertCustomerFromRental(r) {
     existing.name = r.customerName || existing.name;
     existing.mobile = r.customerMobile || existing.mobile;
     existing.altMobile = r.altMobile || existing.altMobile;
-    existing.address = r.customerAddress || existing.address;
+    existing.homeAddress = r.customerAddress || existing.homeAddress || existing.address || '';
     await dbPut('customers', existing);
   } else {
-    const c = { id: uid(), name: r.customerName, mobile: r.customerMobile || '', altMobile: r.altMobile || '', address: r.customerAddress || '', createdAt: Date.now() };
+    const c = {
+      id: uid(), name: r.customerName, mobile: r.customerMobile || '', altMobile: r.altMobile || '',
+      homeAddress: r.customerAddress || '', businessAddress: '', aadharPhotos: [], visitingCardPhotos: [],
+      createdAt: Date.now()
+    };
     state.customers.push(c);
     await dbPut('customers', c);
   }
 }
+
+function custHomeAddr(c) { return c.homeAddress || c.address || ''; }
 
 async function bumpFrequentItem(name) {
   if (!name) return;
@@ -388,18 +403,23 @@ function renderRentals() {
 function renderCustomers() {
   const q = state.searchQuery.trim().toLowerCase();
   let list = [...state.customers];
-  if (q) list = list.filter(c => (c.name + c.mobile + c.address).toLowerCase().includes(q));
+  if (q) list = list.filter(c => (c.name + c.mobile + custHomeAddr(c) + (c.businessAddress||'')).toLowerCase().includes(q));
   list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   return `
-    <div class="page-header"><h2>Customers</h2></div>
+    <div class="page-header"><h2>Customers</h2><button class="btn btn-primary btn-sm" id="newCustomerBtn">+ New</button></div>
     ${list.length ? list.map(c => {
       const rentals = state.rentals.filter(r => !r.deleted && (r.customerMobile === c.mobile || r.customerName === c.name));
       const totalDue = rentals.reduce((s, r) => s + rentalDue(r), 0);
       return `<div class="card compact-card" data-open-customer="${c.id}">
         <div class="top">
-          <div>
-            <div class="name">${escapeHtml(c.name)}</div>
-            <div class="items">${escapeHtml(c.mobile || 'No mobile')}${c.address ? ' · ' + escapeHtml(truncate(c.address, 26)) : ''}</div>
+          <div style="display:flex;align-items:center;gap:9px;">
+            <div style="width:32px;height:32px;border-radius:50%;overflow:hidden;background:var(--bg);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;">
+              ${c.photo ? `<img src="${c.photo}" style="width:100%;height:100%;object-fit:cover;">` : '👤'}
+            </div>
+            <div>
+              <div class="name">${escapeHtml(c.name)}</div>
+              <div class="items">${escapeHtml(c.mobile || 'No mobile')}${custHomeAddr(c) ? ' · ' + escapeHtml(truncate(custHomeAddr(c), 26)) : ''}</div>
+            </div>
           </div>
           ${totalDue > 0 ? `<span class="due-amt">Due ${fmtMoney(totalDue)}</span>` : `<span class="due-amt clear">Paid</span>`}
         </div>
@@ -427,14 +447,20 @@ function renderCustomerDetail(id) {
 
   return `
     <div class="page-header"><button class="back-btn" data-back="customers">←</button><h2>${escapeHtml(c.name)}</h2></div>
+    ${c.photo ? `<div style="text-align:center;margin-bottom:12px;"><img src="${c.photo}" style="width:88px;height:88px;border-radius:50%;object-fit:cover;border:3px solid var(--card);box-shadow:0 4px 12px rgba(0,0,0,.12);"></div>` : ''}
     <div class="card">
       <div style="font-size:13px;line-height:1.7;">
         📞 <a href="tel:${c.mobile}">${escapeHtml(c.mobile || '—')}</a>${c.altMobile ? ' / ' + escapeHtml(c.altMobile) : ''}<br>
-        📍 ${escapeHtml(c.address || '—')}<br>
+        📍 Home: ${escapeHtml(custHomeAddr(c) || '—')}<br>
+        ${c.businessAddress ? `🏢 Business: ${escapeHtml(c.businessAddress)}<br>` : ''}
         💼 Total Business: <b>${fmtMoney(totalBiz)}</b><br>
         ${totalDue > 0 ? `⚠️ Outstanding: <b style="color:var(--red)">${fmtMoney(totalDue)}</b>` : `✅ No outstanding dues`}
       </div>
+      <button class="btn btn-outline btn-sm" id="editCustomerBtn" style="margin-top:10px;">✏️ Edit Customer Details</button>
     </div>
+
+    ${(c.aadharPhotos || []).length ? `<div class="section-title">Aadhar Card</div><div class="kyc-grid">${kycThumbsViewHTML(c.aadharPhotos)}</div>` : ''}
+    ${(c.visitingCardPhotos || []).length ? `<div class="section-title">Visiting Card</div><div class="kyc-grid">${kycThumbsViewHTML(c.visitingCardPhotos)}</div>` : ''}
 
     <div class="section-title">Invoices <span style="font-weight:400;color:var(--text-soft);font-size:11.5px;">(${rentals.length})</span></div>
     ${rentals.length ? rentals.map(r => {
@@ -460,8 +486,158 @@ function renderCustomerDetail(id) {
   `;
 }
 
+/* ---------- Customer Form (Add/Edit) ---------- */
+function openCustomerForm(existingId) {
+  customerFormDraft = existingId ? JSON.parse(JSON.stringify(state.customers.find(c => c.id === existingId))) : blankCustomer();
+  customerFormDraft.aadharPhotos = customerFormDraft.aadharPhotos || [];
+  customerFormDraft.visitingCardPhotos = customerFormDraft.visitingCardPhotos || [];
+  if (customerFormDraft.homeAddress === undefined) customerFormDraft.homeAddress = customerFormDraft.address || '';
+  renderModal(customerFormHTML(!!existingId));
+  bindCustomerFormEvents(existingId);
+  pushModalHistory();
+}
 
-/* ---------- Reports ---------- */
+function customerFormHTML(isEdit) {
+  const c = customerFormDraft;
+  return `
+  <div class="modal-handle"></div>
+  <div class="page-header"><h2>${isEdit ? 'Edit Customer' : 'New Customer'}</h2><button class="back-btn" id="closeCustForm">✕</button></div>
+
+  <div class="section-title">Photo</div>
+  <div style="display:flex;align-items:center;gap:14px;margin-bottom:6px;">
+    <div id="custPhotoPreview" style="width:66px;height:66px;border-radius:50%;overflow:hidden;background:var(--bg);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:26px;flex-shrink:0;">
+      ${c.photo ? `<img src="${c.photo}" style="width:100%;height:100%;object-fit:cover;">` : '👤'}
+    </div>
+    <div class="btn-row" style="margin:0;flex:1;">
+      <button class="btn btn-ghost btn-sm" id="custPhotoCameraBtn" type="button">📷 Camera</button>
+      <button class="btn btn-ghost btn-sm" id="custPhotoGalleryBtn" type="button">🖼 Gallery</button>
+      ${c.photo ? `<button class="btn btn-ghost btn-sm" id="custPhotoRemoveBtn" type="button">✕ Remove</button>` : ''}
+    </div>
+  </div>
+  <input type="file" id="custPhotoCameraInput" accept="image/*" capture="user" style="display:none;">
+  <input type="file" id="custPhotoGalleryInput" accept="image/*" style="display:none;">
+
+  <div class="field"><label>Name</label><input id="cf_name" value="${escapeHtml(c.name)}"></div>
+  <div class="field-row">
+    <div class="field"><label>Mobile</label><input id="cf_mobile" value="${escapeHtml(c.mobile)}" inputmode="tel"></div>
+    <div class="field"><label>Alt. Mobile</label><input id="cf_altMobile" value="${escapeHtml(c.altMobile)}" inputmode="tel"></div>
+  </div>
+  <div class="field"><label>Home Address</label><textarea id="cf_homeAddress">${escapeHtml(c.homeAddress)}</textarea></div>
+  <div class="field"><label>Business Address</label><textarea id="cf_businessAddress">${escapeHtml(c.businessAddress)}</textarea></div>
+
+  <div class="section-title">Aadhar Card</div>
+  <div class="btn-row">
+    <button class="btn btn-ghost btn-sm" id="aadharCameraBtn" type="button">📷 Camera</button>
+    <button class="btn btn-ghost btn-sm" id="aadharGalleryBtn" type="button">🖼 Gallery</button>
+  </div>
+  <input type="file" id="aadharCameraInput" accept="image/*" capture="environment" style="display:none;">
+  <input type="file" id="aadharGalleryInput" accept="image/*" multiple style="display:none;">
+  <div class="kyc-grid" id="aadharGrid">${kycThumbsHTML(c.aadharPhotos)}</div>
+
+  <div class="section-title">Visiting Card</div>
+  <div class="btn-row">
+    <button class="btn btn-ghost btn-sm" id="cardCameraBtn" type="button">📷 Camera</button>
+    <button class="btn btn-ghost btn-sm" id="cardGalleryBtn" type="button">🖼 Gallery</button>
+  </div>
+  <input type="file" id="cardCameraInput" accept="image/*" capture="environment" style="display:none;">
+  <input type="file" id="cardGalleryInput" accept="image/*" multiple style="display:none;">
+  <div class="kyc-grid" id="cardGrid">${kycThumbsHTML(c.visitingCardPhotos)}</div>
+
+  <div class="btn-row">
+    <button class="btn btn-outline" id="cancelCustFormBtn">Cancel</button>
+    <button class="btn btn-primary" id="saveCustomerBtn">Save Customer</button>
+  </div>
+  `;
+}
+
+function bindCustomerFormEvents(existingId) {
+  document.getElementById('closeCustForm').onclick = closeModal;
+  document.getElementById('cancelCustFormBtn').onclick = closeModal;
+
+  const fields = {
+    cf_name: 'name', cf_mobile: 'mobile', cf_altMobile: 'altMobile',
+    cf_homeAddress: 'homeAddress', cf_businessAddress: 'businessAddress'
+  };
+  Object.entries(fields).forEach(([id, key]) => {
+    document.getElementById(id).addEventListener('input', (e) => { customerFormDraft[key] = e.target.value; });
+  });
+
+  function refreshPhotoPreview() {
+    const preview = document.getElementById('custPhotoPreview');
+    preview.innerHTML = customerFormDraft.photo ? `<img src="${customerFormDraft.photo}" style="width:100%;height:100%;object-fit:cover;">` : '👤';
+  }
+  function handlePhotoFile(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      customerFormDraft.photo = reader.result;
+      refreshPhotoPreview();
+      rerenderCustPhotoButtons();
+    };
+    reader.readAsDataURL(file);
+  }
+  function rerenderCustPhotoButtons() {
+    const wrap = document.getElementById('custPhotoCameraBtn').parentElement;
+    wrap.innerHTML = `
+      <button class="btn btn-ghost btn-sm" id="custPhotoCameraBtn" type="button">📷 Camera</button>
+      <button class="btn btn-ghost btn-sm" id="custPhotoGalleryBtn" type="button">🖼 Gallery</button>
+      ${customerFormDraft.photo ? `<button class="btn btn-ghost btn-sm" id="custPhotoRemoveBtn" type="button">✕ Remove</button>` : ''}
+    `;
+    bindPhotoButtons();
+  }
+  function bindPhotoButtons() {
+    document.getElementById('custPhotoCameraBtn').onclick = () => document.getElementById('custPhotoCameraInput').click();
+    document.getElementById('custPhotoGalleryBtn').onclick = () => document.getElementById('custPhotoGalleryInput').click();
+    const removeBtn = document.getElementById('custPhotoRemoveBtn');
+    if (removeBtn) removeBtn.onclick = () => { customerFormDraft.photo = ''; refreshPhotoPreview(); rerenderCustPhotoButtons(); };
+  }
+  document.getElementById('custPhotoCameraInput').addEventListener('change', (e) => { if (e.target.files[0]) handlePhotoFile(e.target.files[0]); });
+  document.getElementById('custPhotoGalleryInput').addEventListener('change', (e) => { if (e.target.files[0]) handlePhotoFile(e.target.files[0]); });
+  bindPhotoButtons();
+
+  function bindPhotoUpload(cameraBtnId, cameraInputId, galleryBtnId, galleryInputId, gridId, arrKey) {
+    document.getElementById(cameraBtnId).onclick = () => document.getElementById(cameraInputId).click();
+    document.getElementById(galleryBtnId).onclick = () => document.getElementById(galleryInputId).click();
+    function handleFiles(files) {
+      [...files].forEach(file => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          customerFormDraft[arrKey].push({ id: uid(), name: file.name.split('.')[0], type: file.type, dataUrl: reader.result });
+          document.getElementById(gridId).innerHTML = kycThumbsHTML(customerFormDraft[arrKey]);
+          bindDeletes();
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+    document.getElementById(cameraInputId).addEventListener('change', (e) => handleFiles(e.target.files));
+    document.getElementById(galleryInputId).addEventListener('change', (e) => handleFiles(e.target.files));
+    function bindDeletes() {
+      document.querySelectorAll(`#${gridId} [data-kyc-del]`).forEach(btn => {
+        btn.onclick = (ev) => {
+          ev.stopPropagation();
+          customerFormDraft[arrKey].splice(Number(btn.dataset.kycDel), 1);
+          document.getElementById(gridId).innerHTML = kycThumbsHTML(customerFormDraft[arrKey]);
+          bindDeletes();
+        };
+      });
+    }
+    bindDeletes();
+  }
+  bindPhotoUpload('aadharCameraBtn', 'aadharCameraInput', 'aadharGalleryBtn', 'aadharGalleryInput', 'aadharGrid', 'aadharPhotos');
+  bindPhotoUpload('cardCameraBtn', 'cardCameraInput', 'cardGalleryBtn', 'cardGalleryInput', 'cardGrid', 'visitingCardPhotos');
+
+  document.getElementById('saveCustomerBtn').onclick = async () => {
+    if (!customerFormDraft.name.trim()) { toast('Please enter a name.'); return; }
+    await dbPut('customers', customerFormDraft);
+    const idx = state.customers.findIndex(c => c.id === customerFormDraft.id);
+    if (idx >= 0) state.customers[idx] = customerFormDraft; else state.customers.push(customerFormDraft);
+    toast('Customer saved.');
+    closeModal();
+    if (existingId) { detailStack = { view: 'customerDetail', id: existingId }; }
+    route();
+  };
+}
+
+
 /* ---------- Invoices (dedicated view) ---------- */
 function renderInvoices() {
   const q = state.searchQuery.trim().toLowerCase();
@@ -665,6 +841,10 @@ function renderSettings() {
 
 /* ---------- Rental Form (Add/Edit) ---------- */
 let formDraft = null; // working copy of rental being added/edited
+let customerFormDraft = null; // working copy of customer being added/edited
+function blankCustomer() {
+  return { id: uid(), name: '', mobile: '', altMobile: '', homeAddress: '', businessAddress: '', photo: '', aadharPhotos: [], visitingCardPhotos: [], createdAt: Date.now() };
+}
 
 function newBlankRental() {
   return {
@@ -731,6 +911,7 @@ function rentalFormHTML() {
   </div>
   <div class="field"><label>Customer Address</label><textarea id="f_customerAddress">${escapeHtml(r.customerAddress)}</textarea></div>
   <div class="field"><label>Delivery Address</label><textarea id="f_deliveryAddress">${escapeHtml(r.deliveryAddress)}</textarea></div>
+  <div id="bizAddrHint"></div>
 
   <div class="section-title">Transport</div>
   <div class="field"><label>Mode of Transport</label><input id="f_transportMode" value="${escapeHtml(r.transportMode)}" placeholder="e.g. Tempo, Auto, Own Vehicle"></div>
@@ -982,12 +1163,27 @@ function bindRentalFormEvents() {
 
   // customer autofill
   const nameInput = document.getElementById('f_customerName');
+  function updateBizAddrHint() {
+    const hint = document.getElementById('bizAddrHint');
+    if (!hint) return;
+    if (formDraft._matchedBusinessAddress) {
+      hint.innerHTML = `<div class="chip" id="useBizAddrChip" style="cursor:pointer;display:inline-block;margin-top:-6px;margin-bottom:10px;">🏢 Use business address for delivery</div>`;
+      document.getElementById('useBizAddrChip').onclick = () => {
+        formDraft.deliveryAddress = formDraft._matchedBusinessAddress;
+        document.getElementById('f_deliveryAddress').value = formDraft._matchedBusinessAddress;
+      };
+    } else {
+      hint.innerHTML = '';
+    }
+  }
   function applyCustomerMatch(c) {
-    formDraft.customerName = c.name; formDraft.customerMobile = c.mobile || ''; formDraft.altMobile = c.altMobile || ''; formDraft.customerAddress = c.address || '';
+    formDraft.customerName = c.name; formDraft.customerMobile = c.mobile || ''; formDraft.altMobile = c.altMobile || ''; formDraft.customerAddress = custHomeAddr(c);
+    formDraft._matchedBusinessAddress = c.businessAddress || '';
     nameInput.value = c.name;
     document.getElementById('f_customerMobile').value = c.mobile || '';
     document.getElementById('f_altMobile').value = c.altMobile || '';
-    document.getElementById('f_customerAddress').value = c.address || '';
+    document.getElementById('f_customerAddress').value = custHomeAddr(c);
+    updateBizAddrHint();
   }
   nameInput.addEventListener('input', () => {
     const q = nameInput.value.trim().toLowerCase();
@@ -995,7 +1191,7 @@ function bindRentalFormEvents() {
     if (!q) { box.innerHTML = ''; return; }
     const matches = state.customers.filter(c => c.name.toLowerCase().includes(q)).slice(0, 5);
     if (!matches.length) { box.innerHTML = ''; return; }
-    box.innerHTML = `<div class="autofill-list">${matches.map(c => `<div data-pick-cust="${c.id}"><b>${escapeHtml(c.name)}</b><span>${escapeHtml(c.mobile || '')} ${escapeHtml(c.address || '')}</span></div>`).join('')}</div>`;
+    box.innerHTML = `<div class="autofill-list">${matches.map(c => `<div data-pick-cust="${c.id}"><b>${escapeHtml(c.name)}</b><span>${escapeHtml(c.mobile || '')} ${escapeHtml(custHomeAddr(c))}</span></div>`).join('')}</div>`;
     box.querySelectorAll('[data-pick-cust]').forEach(el => {
       el.addEventListener('click', () => {
         const c = state.customers.find(x => x.id === el.dataset.pickCust);
@@ -1444,6 +1640,10 @@ function openInvoicePrint(r) {
       .totals{margin-top:16px;width:100%;max-width:320px;margin-left:auto;background:#fff7ec;border:1px solid #f3d9ad;border-radius:10px;padding:14px 16px;}
       .totals div{display:flex;justify-content:space-between;padding:4px 0;font-size:13px;}
       .totals .grand{font-weight:800;font-size:16px;border-top:2px solid #f59e0b;padding-top:8px;margin-top:6px;color:#1e2952;}
+      .terms{margin-top:22px;background:#f7f8fa;border:1px solid #e4e6f2;border-radius:10px;padding:14px 16px;}
+      .terms h3{margin:0 0 8px;font-size:13px;color:#1e2952;}
+      .terms ol{margin:0;padding-left:18px;}
+      .terms li{font-size:11.5px;color:#444;line-height:1.6;margin-bottom:3px;}
       @media print { body{background:#fff;} .sheet{max-width:100%;} }
     </style></head><body>
     <div class="sheet">
@@ -1478,6 +1678,11 @@ function openInvoicePrint(r) {
           <div><span>Advance Paid</span><span>-${fmtMoney(rentalPaid(r))}</span></div>
           <div class="grand"><span>Balance Due</span><span>${fmtMoney(due)}</span></div>
         </div>
+        ${(s.invoiceTerms && s.invoiceTerms.length) ? `
+        <div class="terms">
+          <h3>Terms &amp; Conditions</h3>
+          <ol>${s.invoiceTerms.map(t => `<li>${escapeHtml(t)}</li>`).join('')}</ol>
+        </div>` : ''}
         ${stampSigBlock}
       </div>
     </div>
@@ -1670,6 +1875,10 @@ function route() {
   main.innerHTML = html;
   bindMainEvents();
   if (state.view === 'settings' && detailStack.view !== 'customerDetail') bindSettingsEvents();
+  if (detailStack.view === 'customerDetail') {
+    const editBtn = document.getElementById('editCustomerBtn');
+    if (editBtn) editBtn.onclick = () => openCustomerForm(detailStack.id);
+  }
   document.querySelectorAll('nav.bottomnav button').forEach(b => b.classList.toggle('active', b.dataset.view === state.view));
 }
 
@@ -1680,6 +1889,8 @@ function bindMainEvents() {
   document.querySelectorAll('[data-open-customer]').forEach(el => {
     el.addEventListener('click', () => { detailStack = { view: 'customerDetail', id: el.dataset.openCustomer }; route(); });
   });
+  const newCustomerBtn = document.getElementById('newCustomerBtn');
+  if (newCustomerBtn) newCustomerBtn.onclick = () => openCustomerForm(null);
   document.querySelectorAll('[data-back]').forEach(el => {
     el.addEventListener('click', () => { detailStack = { view: null, id: null }; state.view = el.dataset.back; route(); });
   });
