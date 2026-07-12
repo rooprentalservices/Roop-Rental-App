@@ -161,17 +161,25 @@ function escapeHtml(s) {
   return (s || '').toString().replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-const ITEM_RATES = {
-  'H Frames': 50, 'Bracings': 0, 'Walkway Plank': 20, 'Wheels': 15, 'Jack': 25,
-  'Ladder 6ft': 30, 'Ladder 8ft': 50, 'Ladder 10ft': 100, 'Ladder 12ft': 120,
-  'Ladder 15ft': 200, 'Ladder 18ft': 300, 'Ladder 20ft': 300, 'Sidi 20ft': 250,
-  'Drum': 50, 'Jhula': 150
-};
-const PRELOADED_ITEMS = Object.keys(ITEM_RATES);
+const DEFAULT_ITEM_CATALOG = [
+  { name: 'H Frames', rate: 50 }, { name: 'Bracings', rate: 0 }, { name: 'Walkway Plank', rate: 20 },
+  { name: 'Wheels', rate: 15 }, { name: 'Jack', rate: 25 }, { name: 'Ladder 6ft', rate: 30 },
+  { name: 'Ladder 8ft', rate: 50 }, { name: 'Ladder 10ft', rate: 100 }, { name: 'Ladder 12ft', rate: 120 },
+  { name: 'Ladder 15ft', rate: 200 }, { name: 'Ladder 18ft', rate: 300 }, { name: 'Ladder 20ft', rate: 300 },
+  { name: 'Sidi 20ft', rate: 250 }, { name: 'Drum', rate: 50 }, { name: 'Jhula', rate: 150 }
+];
+function getItemCatalog() {
+  return state.settings.itemCatalog && state.settings.itemCatalog.length ? state.settings.itemCatalog : DEFAULT_ITEM_CATALOG;
+}
+function getItemRatesMap() {
+  const map = {};
+  getItemCatalog().forEach(i => { map[i.name] = i.rate; });
+  return map;
+}
 
 /* ---------- Global State ---------- */
 const state = {
-  view: 'dashboard',
+  view: 'rentals',
   rentals: [],
   customers: [],
   frequentItems: [],
@@ -202,10 +210,11 @@ const state = {
       'Subject to Ahmedabad, Gujarat jurisdiction only.',
       'Kindly preserve this invoice for future reference.'
     ],
-    themeConfig: null // filled in with defaultThemeConfig() below at first run
+    themeConfig: null, // filled in with defaultThemeConfig() below at first run
+    itemCatalog: null // filled in with DEFAULT_ITEM_CATALOG below at first run
   },
   searchQuery: '',
-  filter: 'all',
+  filter: 'active',
   invoiceFilter: 'all',
   sort: 'newest',
   editingId: null
@@ -563,7 +572,7 @@ function renderCustomerDetail(id) {
   // full payment ledger across all this customer's rentals (advance counted as a payment too)
   const ledger = [];
   rentals.forEach(r => {
-    if (Number(r.advanceAmount) > 0) ledger.push({ date: r.date, amount: r.advanceAmount, mode: r.advanceMode || 'Cash', invoiceNumber: r.invoiceNumber });
+    if (Number(r.advanceAmount) > 0) ledger.push({ date: r.advanceDate || r.date, amount: r.advanceAmount, mode: r.advanceMode || 'Cash', invoiceNumber: r.invoiceNumber });
     (r.payments || []).forEach(p => ledger.push({ date: p.date, amount: p.amount, mode: p.mode, invoiceNumber: r.invoiceNumber }));
   });
   ledger.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
@@ -793,7 +802,7 @@ function renderInvoices() {
           </div>
           <span class="due-amt ${due <= 0 ? 'clear' : ''}">${due > 0 ? 'Due ' + fmtMoney(due) : 'Paid'}</span>
         </div>
-        <div class="meta"><span>📅 ${fmtDate(r.invoiceDate || r.date)}</span><span>💰 ${fmtMoney(rentalGrandTotal(r))}</span></div>
+        <div class="meta"><span>📅 ${fmtDate(r.invoiceDate || r.date)}</span><span>💰 ${fmtMoney(rentalGrandTotal(r))}</span>${r.deliveryAddress ? `<span>📍 ${escapeHtml(truncate(r.deliveryAddress, 28))}</span>` : ''}</div>
       </div>`;
     }).join('') : '<div class="empty">No invoices yet.</div>'}
   `;
@@ -816,18 +825,6 @@ function renderReports() {
   const monthlyData = months.map(m => active.filter(r => (r.date || '').startsWith(m)).reduce((s, r) => s + rentalPaid(r), 0));
   const maxMonth = Math.max(...monthlyData, 1);
 
-  // dues & collections by customer
-  const duesByCust = {}, collectedByCust = {};
-  active.forEach(r => {
-    const key = r.customerName || 'Unknown';
-    const due = rentalDue(r);
-    if (due > 0) duesByCust[key] = (duesByCust[key] || 0) + due;
-    const paid = rentalPaid(r);
-    if (paid > 0) collectedByCust[key] = (collectedByCust[key] || 0) + paid;
-  });
-  const duesList = Object.entries(duesByCust).sort((a, b) => b[1] - a[1]);
-  const collectedList = Object.entries(collectedByCust).sort((a, b) => b[1] - a[1]);
-
   return `
     <div class="page-header"><h2>Reports</h2></div>
     <div class="stat-grid">
@@ -848,26 +845,19 @@ function renderReports() {
           </div>`).join('')}
       </div>
     </div>
-
-    <div class="section-title">💰 Payment Dues by Customer</div>
-    <div class="card">
-      ${duesList.length ? duesList.map(([name, val]) => `
-        <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-bottom:1px solid var(--border);">
-          <span>${escapeHtml(name)}</span><b style="color:var(--red)">${fmtMoney(val)}</b>
-        </div>`).join('') : '<div class="empty">No pending dues 🎉</div>'}
-    </div>
-
-    <div class="section-title">✅ Payment Collected by Customer</div>
-    <div class="card">
-      ${collectedList.length ? collectedList.map(([name, val]) => `
-        <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-bottom:1px solid var(--border);">
-          <span>${escapeHtml(name)}</span><b style="color:var(--green)">${fmtMoney(val)}</b>
-        </div>`).join('') : '<div class="empty">No data yet.</div>'}
-    </div>
   `;
 }
 
 /* ---------- Settings ---------- */
+function itemCatalogRowsHTML(catalog) {
+  return catalog.map((it, idx) => `
+    <div class="catalog-row" data-cat-idx="${idx}">
+      <input class="cat-name" data-idx="${idx}" value="${escapeHtml(it.name)}" placeholder="Item name">
+      <input class="cat-rate" type="number" data-idx="${idx}" value="${it.rate}" placeholder="Rate">
+      <button type="button" class="cat-del" data-idx="${idx}">✕</button>
+    </div>`).join('');
+}
+
 function renderSettings() {
   const s = state.settings;
   const tc = s.themeConfig;
@@ -926,6 +916,16 @@ function renderSettings() {
       </div>
       <div style="font-size:12px;color:var(--text-soft);margin:-6px 0 10px;">Next invoice will be: <b>${nextInvoiceNumber()}</b></div>
       <button class="btn btn-outline" id="saveInvoiceNumBtn">Save Numbering</button>
+    </div>
+
+    <div class="section-title">Manage Items <span style="font-weight:400;color:var(--text-soft);font-size:11.5px;">(rental catalog)</span></div>
+    <div class="card">
+      <p style="font-size:12px;color:var(--text-soft);margin-top:0;">These items and rates show up pre-filled every time you create a new rental, so you only enter quantity. Add, rename, re-price, or remove any of them.</p>
+      <div id="itemCatalogList">${itemCatalogRowsHTML(getItemCatalog())}</div>
+      <div class="btn-row">
+        <button class="btn btn-ghost btn-sm" id="addCatalogItemBtn" type="button">+ Add Item</button>
+      </div>
+      <button class="btn btn-primary" id="saveCatalogBtn" style="margin-top:8px;">Save Items</button>
     </div>
 
     <div class="section-title">App Lock</div>
@@ -1063,7 +1063,7 @@ function newBlankRental() {
     transportChargeDelivery: 0, transportDeliveryPaidBy: 'party',
     transportChargePickup: 0, transportPickupPaidBy: 'party',
     items: [],
-    advanceAmount: 0, advanceMode: 'Cash', refundAmount: 0, oldDues: 0, discount: 0, notes: '',
+    advanceAmount: 0, advanceMode: 'Cash', advanceDate: todayISO(), refundAmount: 0, oldDues: 0, discount: 0, notes: '',
     actualReturnDate: '', actualReturnTime: '22:00',
     payments: [], kyc: [], archived: false, deleted: false, isDraft: false
   };
@@ -1179,11 +1179,12 @@ function rentalFormHTML() {
   <div class="section-title">Payment</div>
   <div class="field-row">
     <div class="field"><label>Advance Amount</label><input id="f_advance" type="number" value="${r.advanceAmount}"></div>
-    <div class="field"><label>Advance Mode</label>
-      <select id="f_advanceMode">
-        ${['Cash', 'Online', 'UPI', 'Cheque', 'Bank Transfer'].map(m => `<option ${r.advanceMode === m ? 'selected' : ''}>${m}</option>`).join('')}
-      </select>
-    </div>
+    <div class="field"><label>Advance Date</label><input id="f_advanceDate" type="date" value="${r.advanceDate || todayISO()}"></div>
+  </div>
+  <div class="field"><label>Advance Mode</label>
+    <select id="f_advanceMode">
+      ${['Cash', 'Online', 'UPI', 'Cheque', 'Bank Transfer'].map(m => `<option ${r.advanceMode === m ? 'selected' : ''}>${m}</option>`).join('')}
+    </select>
   </div>
   <div class="field-row">
     <div class="field"><label>Old Dues</label><input id="f_oldDues" type="number" value="${r.oldDues}"></div>
@@ -1219,10 +1220,11 @@ function rentalFormHTML() {
 }
 
 function standardItemsHTML(items) {
-  return Object.keys(ITEM_RATES).map((name, idx) => {
+  const rates = getItemRatesMap();
+  return Object.keys(rates).map((name, idx) => {
     const entry = (items || []).find(it => it.name === name);
     const qty = entry ? entry.qty : '';
-    const rate = entry ? entry.rentPerDay : ITEM_RATES[name];
+    const rate = entry ? entry.rentPerDay : rates[name];
     return `
     <div class="std-item-row" data-std-name="${escapeHtml(name)}">
       <div class="std-item-label">${escapeHtml(name)}</div>
@@ -1234,7 +1236,8 @@ function standardItemsHTML(items) {
 }
 
 function customItemsHTML(items) {
-  const custom = (items || []).filter(it => !Object.prototype.hasOwnProperty.call(ITEM_RATES, it.name));
+  const rates = getItemRatesMap();
+  const custom = (items || []).filter(it => !Object.prototype.hasOwnProperty.call(rates, it.name));
   if (!custom.length) return '<div class="empty" style="padding:14px 4px;">No custom items added.</div>';
   return custom.map(it => itemRowHTML(it, it.id)).join('');
 }
@@ -1266,7 +1269,7 @@ function kycThumbsHTML(kyc) {
 
 /* item suggestion datalist */
 function itemSuggestionsHTML() {
-  const names = new Set(PRELOADED_ITEMS);
+  const names = new Set(Object.keys(getItemRatesMap()));
   state.frequentItems.forEach(i => names.add(i.name));
   return `<datalist id="itemSuggestions">${[...names].map(n => `<option value="${escapeHtml(n)}">`).join('')}</datalist>`;
 }
@@ -1355,7 +1358,7 @@ function bindRentalFormEvents() {
     f_customerAddress: 'customerAddress', f_deliveryAddress: 'deliveryAddress', f_transportMode: 'transportMode',
     f_transporterName: 'transporterName', f_transporterMobile: 'transporterMobile', f_vehicleNumber: 'vehicleNumber',
     f_transportChargeDelivery: 'transportChargeDelivery', f_transportChargePickup: 'transportChargePickup',
-    f_date: 'date', f_actualReturn: 'actualReturnDate', f_advance: 'advanceAmount',
+    f_date: 'date', f_actualReturn: 'actualReturnDate', f_advance: 'advanceAmount', f_advanceDate: 'advanceDate',
     f_advanceMode: 'advanceMode', f_oldDues: 'oldDues', f_refund: 'refundAmount', f_discount: 'discount', f_notes: 'notes'
   };
   const dateFields = ['f_date', 'f_actualReturn'];
@@ -1505,9 +1508,10 @@ function bindRentalFormEvents() {
     row.querySelector('.it-name').addEventListener('input', (e) => {
       const item = formDraft.items.find(it => it.id === id);
       item.name = e.target.value;
-      if (Object.prototype.hasOwnProperty.call(ITEM_RATES, e.target.value)) {
-        item.rentPerDay = ITEM_RATES[e.target.value];
-        row.querySelector('.it-rate').value = ITEM_RATES[e.target.value];
+      const rates = getItemRatesMap();
+      if (Object.prototype.hasOwnProperty.call(rates, e.target.value)) {
+        item.rentPerDay = rates[e.target.value];
+        row.querySelector('.it-rate').value = rates[e.target.value];
         refreshFormTotals(); updateLineTotal(id);
       }
     });
@@ -1544,7 +1548,7 @@ function bindRentalFormEvents() {
   }
   function rerenderCustomItems() {
     document.getElementById('itemsWrap').innerHTML = customItemsHTML(formDraft.items);
-    formDraft.items.filter(it => !Object.prototype.hasOwnProperty.call(ITEM_RATES, it.name)).forEach(it => bindItemRow(it.id));
+    formDraft.items.filter(it => !Object.prototype.hasOwnProperty.call(getItemRatesMap(), it.name)).forEach(it => bindItemRow(it.id));
   }
   rerenderCustomItems();
   document.getElementById('addItemBtn').onclick = () => { formDraft.items.push(blankItem()); rerenderCustomItems(); };
@@ -2055,6 +2059,37 @@ function bindSettingsEvents() {
     route();
   };
 
+  // Manage Items (rental catalog)
+  let catalogDraft = JSON.parse(JSON.stringify(getItemCatalog()));
+  function rerenderCatalogList() {
+    document.getElementById('itemCatalogList').innerHTML = itemCatalogRowsHTML(catalogDraft);
+    bindCatalogRows();
+  }
+  function bindCatalogRows() {
+    document.querySelectorAll('.cat-name').forEach(inp => {
+      inp.addEventListener('input', () => { catalogDraft[Number(inp.dataset.idx)].name = inp.value; });
+    });
+    document.querySelectorAll('.cat-rate').forEach(inp => {
+      inp.addEventListener('input', () => { catalogDraft[Number(inp.dataset.idx)].rate = Number(inp.value) || 0; });
+    });
+    document.querySelectorAll('.cat-del').forEach(btn => {
+      btn.onclick = () => { catalogDraft.splice(Number(btn.dataset.idx), 1); rerenderCatalogList(); };
+    });
+  }
+  bindCatalogRows();
+  document.getElementById('addCatalogItemBtn').onclick = () => {
+    catalogDraft.push({ name: '', rate: 0 });
+    rerenderCatalogList();
+  };
+  document.getElementById('saveCatalogBtn').onclick = async () => {
+    const cleaned = catalogDraft.filter(it => it.name && it.name.trim());
+    if (!cleaned.length) { toast('Add at least one item.'); return; }
+    state.settings.itemCatalog = cleaned;
+    await dbPut('settings', { key: 'main', value: state.settings });
+    toast('Item catalog saved.');
+    route();
+  };
+
   document.getElementById('pinToggle').onchange = (e) => {
     state.settings.pinEnabled = e.target.checked;
     document.getElementById('pinSetupWrap').style.display = e.target.checked ? '' : 'none';
@@ -2263,6 +2298,9 @@ async function loadAllData() {
     // fill in any new keys added since the user's last save, without losing their choices
     state.settings.themeConfig = { ...defaultThemeConfig(), ...state.settings.themeConfig };
   }
+  if (!state.settings.itemCatalog || !state.settings.itemCatalog.length) {
+    state.settings.itemCatalog = JSON.parse(JSON.stringify(DEFAULT_ITEM_CATALOG));
+  }
 }
 
 async function init() {
@@ -2281,7 +2319,7 @@ async function init() {
     btn.addEventListener('click', () => {
       detailStack = { view: null, id: null };
       state.view = btn.dataset.view;
-      state.filter = 'all';
+      state.filter = 'active';
       route();
     });
   });
@@ -2294,7 +2332,7 @@ async function init() {
   });
   document.getElementById('globalSearch').addEventListener('input', (e) => {
     state.searchQuery = e.target.value;
-    if (state.view === 'dashboard') { state.view = 'rentals'; state.filter = 'all'; }
+    if (state.view === 'dashboard') { state.view = 'rentals'; state.filter = 'active'; }
     route();
   });
 
