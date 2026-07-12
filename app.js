@@ -201,7 +201,8 @@ const state = {
       'Payment is due as per the agreed rental terms.',
       'Subject to Ahmedabad, Gujarat jurisdiction only.',
       'Kindly preserve this invoice for future reference.'
-    ]
+    ],
+    themeConfig: null // filled in with defaultThemeConfig() below at first run
   },
   searchQuery: '',
   filter: 'all',
@@ -209,6 +210,128 @@ const state = {
   sort: 'newest',
   editingId: null
 };
+
+/* ---------- Theme Customization ---------- */
+const ACCENT_PRESETS = {
+  blue: '#2563eb', red: '#dc2626', green: '#16a34a', orange: '#f59e0b',
+  purple: '#9333ea', teal: '#0d9488', black: '#1f2937'
+};
+const FONT_FAMILIES = {
+  system: "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif",
+  serif: "Georgia,'Times New Roman',serif",
+  mono: "ui-monospace,'SF Mono',Menlo,monospace",
+  rounded: "ui-rounded,'Segoe UI Rounded',-apple-system,sans-serif"
+};
+const FONT_SCALE = { small: 0.9, medium: 1, large: 1.15, xlarge: 1.3 };
+const FONT_WEIGHT_MAP = { normal: 400, medium: 500, bold: 700 };
+const CARD_PAD_MAP = { compact: '9px 11px', normal: '13px 14px', spacious: '18px 18px' };
+const CARD_ELEVATION_MAP = {
+  none: 'none', low: '0 1px 4px rgba(20,25,50,.06)',
+  medium: '0 4px 14px rgba(20,25,50,.12)', high: '0 10px 28px rgba(20,25,50,.2)'
+};
+const BTN_RADIUS_MAP = { rounded: '14px', square: '6px' };
+const BTN_PAD_MAP = { compact: '9px 10px', normal: '13px', large: '16px 18px' };
+const ANIM_SPEED_MAP = { slow: '.32s', normal: '.15s', fast: '.06s' };
+
+function defaultThemeConfig() {
+  return {
+    mode: 'light', // 'light' | 'dark' | 'system'
+    accentPreset: 'orange',
+    accentColor: ACCENT_PRESETS.orange,
+    screenBg: '', cardBg: '',
+    fontSize: 'medium', fontFamily: 'system', fontWeight: 'normal',
+    cardRadius: 16, cardElevation: 'low', cardBorder: true, cardPadding: 'normal',
+    buttonShape: 'rounded', buttonFill: 'filled', buttonSize: 'normal',
+    dashboardDensity: 'comfortable',
+    animationsEnabled: true, animationSpeed: 'normal'
+  };
+}
+
+function hexToRgb(hex) {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || '');
+  if (!m) return { r: 245, g: 158, b: 11 };
+  return { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) };
+}
+function shadeHex(hex, percent) {
+  const { r, g, b } = hexToRgb(hex);
+  const t = percent < 0 ? 0 : 255;
+  const p = Math.abs(percent);
+  const nr = Math.round((t - r) * p) + r;
+  const ng = Math.round((t - g) * p) + g;
+  const nb = Math.round((t - b) * p) + b;
+  return '#' + [nr, ng, nb].map(v => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0')).join('');
+}
+function isDarkColor(hex) {
+  const { r, g, b } = hexToRgb(hex);
+  return (r * 299 + g * 587 + b * 114) / 1000 < 140;
+}
+
+function effectiveThemeMode() {
+  const tc = state.settings.themeConfig;
+  if (tc.mode === 'system') {
+    return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+  }
+  return tc.mode;
+}
+
+function applyThemeConfig() {
+  const tc = state.settings.themeConfig;
+  const mode = effectiveThemeMode();
+  document.body.setAttribute('data-theme', mode);
+  const root = document.documentElement.style;
+
+  // accent color drives buttons, FAB, header band, active states, links, charts
+  const accent = tc.accentColor || ACCENT_PRESETS.orange;
+  root.setProperty('--amber', accent);
+  root.setProperty('--amber-dark', shadeHex(accent, -0.35));
+  root.setProperty('--amber-light', shadeHex(accent, 0.35));
+  const headerDark1 = shadeHex(accent, -0.72);
+  const headerDark2 = shadeHex(accent, -0.6);
+  root.setProperty('--indigo-900', mode === 'dark' ? headerDark1 : headerDark1);
+  root.setProperty('--indigo-800', headerDark2);
+
+  // backgrounds
+  if (tc.screenBg) root.setProperty('--bg', tc.screenBg);
+  else root.removeProperty('--bg');
+  if (tc.cardBg) root.setProperty('--card', tc.cardBg);
+  else root.removeProperty('--card');
+
+  // fonts
+  root.setProperty('--app-font-family', FONT_FAMILIES[tc.fontFamily] || FONT_FAMILIES.system);
+  root.setProperty('--app-font-weight', FONT_WEIGHT_MAP[tc.fontWeight] || 400);
+  document.getElementById('app').style.zoom = FONT_SCALE[tc.fontSize] || 1;
+
+  // card design
+  root.setProperty('--radius', (tc.cardRadius || 16) + 'px');
+  root.setProperty('--card-shadow', CARD_ELEVATION_MAP[tc.cardElevation] || CARD_ELEVATION_MAP.low);
+  root.setProperty('--card-border-w', tc.cardBorder === false ? '0px' : '1px');
+  root.setProperty('--card-pad', CARD_PAD_MAP[tc.cardPadding] || CARD_PAD_MAP.normal);
+
+  // buttons
+  root.setProperty('--btn-radius', BTN_RADIUS_MAP[tc.buttonShape] || BTN_RADIUS_MAP.rounded);
+  root.setProperty('--btn-pad', BTN_PAD_MAP[tc.buttonSize] || BTN_PAD_MAP.normal);
+  document.body.setAttribute('data-btn-fill', tc.buttonFill || 'filled');
+
+  // dashboard density
+  document.body.setAttribute('data-dash-density', tc.dashboardDensity || 'comfortable');
+
+  // animations
+  root.setProperty('--transition-duration', tc.animationsEnabled === false ? '0s' : (ANIM_SPEED_MAP[tc.animationSpeed] || ANIM_SPEED_MAP.normal));
+
+  const icons = { light: '🌙', dark: '☀️', system: '⚙️' };
+  const btn = document.getElementById('themeToggle');
+  if (btn) btn.textContent = icons[tc.mode] || '🌙';
+}
+
+let systemThemeListenerBound = false;
+function bindSystemThemeListener() {
+  if (systemThemeListenerBound || !window.matchMedia) return;
+  systemThemeListenerBound = true;
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (state.settings.themeConfig.mode === 'system') applyThemeConfig();
+  });
+}
+
 
 function nextInvoiceNumber() {
   const n = state.settings.invoiceCounter || 1;
@@ -340,7 +463,7 @@ function rentalCardHTML(r) {
       <span class="badge ${badge.cls}">${badge.label}</span>
     </div>
     <div class="meta">
-      <span>#${escapeHtml(r.invoiceNumber || '—')}</span>
+      <span>${r.invoiceNumber ? '#' + escapeHtml(r.invoiceNumber) : 'Not invoiced'}</span>
       <span>📅 ${fmtDate(r.date)}</span>
       ${r.deliveryAddress ? `<span>📍 ${escapeHtml(truncate(r.deliveryAddress, 28))}</span>` : ''}
       <span class="due-amt ${due <= 0 ? 'clear' : ''}">${due > 0 ? 'Due ' + fmtMoney(due) : 'Cleared'}</span>
@@ -641,7 +764,7 @@ function bindCustomerFormEvents(existingId) {
 /* ---------- Invoices (dedicated view) ---------- */
 function renderInvoices() {
   const q = state.searchQuery.trim().toLowerCase();
-  let list = state.rentals.filter(r => !r.deleted);
+  let list = state.rentals.filter(r => !r.deleted && r.invoiceNumber);
   if (q) {
     list = list.filter(r => (r.invoiceNumber || '').toLowerCase().includes(q) || (r.customerName || '').toLowerCase().includes(q));
   }
@@ -747,6 +870,8 @@ function renderReports() {
 /* ---------- Settings ---------- */
 function renderSettings() {
   const s = state.settings;
+  const tc = s.themeConfig;
+  const mode = effectiveThemeMode();
   return `
     <div class="page-header"><h2>Settings</h2></div>
     <div class="section-title">Business Details</div>
@@ -825,14 +950,95 @@ function renderSettings() {
       <input type="file" id="importFile" accept="application/json" style="display:none;">
     </div>
 
-    <div class="section-title">Appearance</div>
+    <div class="section-title">🎨 Theme Customization</div>
     <div class="card">
-      <label style="font-size:12px;font-weight:600;color:var(--text-soft);display:block;margin-bottom:8px;">Theme</label>
+      <label class="tc-label">Theme Mode</label>
       <div class="chip-row">
-        <div class="chip theme-chip ${s.theme === 'light' ? 'active' : ''}" data-theme-pick="light">☀️ Light</div>
-        <div class="chip theme-chip ${s.theme === 'dark' ? 'active' : ''}" data-theme-pick="dark">🌙 Dark</div>
-        <div class="chip theme-chip ${s.theme === 'gray' ? 'active' : ''}" data-theme-pick="gray">◐ Gray</div>
+        <div class="chip theme-chip ${tc.mode === 'light' ? 'active' : ''}" data-tc="mode" data-val="light">☀️ Light</div>
+        <div class="chip theme-chip ${tc.mode === 'dark' ? 'active' : ''}" data-tc="mode" data-val="dark">🌙 Dark</div>
+        <div class="chip theme-chip ${tc.mode === 'system' ? 'active' : ''}" data-tc="mode" data-val="system">⚙️ System</div>
       </div>
+
+      <label class="tc-label">Accent Color</label>
+      <div class="chip-row" id="accentPresetRow">
+        ${Object.entries(ACCENT_PRESETS).map(([name, hex]) => `
+          <div class="accent-swatch ${tc.accentPreset === name ? 'active' : ''}" data-accent-preset="${name}" data-accent-hex="${hex}" style="background:${hex};" title="${name}"></div>
+        `).join('')}
+        <label class="accent-swatch custom-swatch ${tc.accentPreset === 'custom' ? 'active' : ''}" style="background:${tc.accentColor};" title="Custom">
+          🎨<input type="color" id="accentCustomPicker" value="${tc.accentColor}" style="opacity:0;position:absolute;width:1px;height:1px;">
+        </label>
+      </div>
+
+      <label class="tc-label">Background Colors <span style="font-weight:400;color:var(--text-soft);">(leave blank for theme default)</span></label>
+      <div class="field-row">
+        <div class="field"><label>Screen</label><input type="color" id="screenBgPicker" value="${tc.screenBg || (mode === 'dark' ? '#0b0e1f' : '#f3f4fa')}"></div>
+        <div class="field"><label>Card</label><input type="color" id="cardBgPicker" value="${tc.cardBg || (mode === 'dark' ? '#161b33' : '#ffffff')}"></div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-outline btn-sm" id="clearBgBtn" type="button">Reset backgrounds to default</button>
+      </div>
+
+      <label class="tc-label">Font</label>
+      <div class="chip-row">
+        ${['small', 'medium', 'large', 'xlarge'].map(sz => `<div class="chip ${tc.fontSize === sz ? 'active' : ''}" data-tc="fontSize" data-val="${sz}">${sz[0].toUpperCase() + sz.slice(1)}</div>`).join('')}
+      </div>
+      <div class="chip-row">
+        ${[['system', 'System'], ['serif', 'Serif'], ['mono', 'Mono'], ['rounded', 'Rounded']].map(([v, l]) => `<div class="chip ${tc.fontFamily === v ? 'active' : ''}" data-tc="fontFamily" data-val="${v}">${l}</div>`).join('')}
+      </div>
+      <div class="chip-row">
+        ${[['normal', 'Normal'], ['medium', 'Medium'], ['bold', 'Bold']].map(([v, l]) => `<div class="chip ${tc.fontWeight === v ? 'active' : ''}" data-tc="fontWeight" data-val="${v}">${l}</div>`).join('')}
+      </div>
+
+      <label class="tc-label">Card Design</label>
+      <div class="field">
+        <label style="display:flex;justify-content:space-between;">Corner Radius <span>${tc.cardRadius}px</span></label>
+        <input type="range" id="cardRadiusSlider" min="0" max="28" value="${tc.cardRadius}" style="width:100%;">
+      </div>
+      <div class="chip-row">
+        ${[['none', 'No Shadow'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']].map(([v, l]) => `<div class="chip ${tc.cardElevation === v ? 'active' : ''}" data-tc="cardElevation" data-val="${v}">${l}</div>`).join('')}
+      </div>
+      <div class="chip-row">
+        ${[['normal', 'Normal Padding'], ['compact', 'Compact'], ['spacious', 'Spacious']].map(([v, l]) => `<div class="chip ${tc.cardPadding === v ? 'active' : ''}" data-tc="cardPadding" data-val="${v}">${l}</div>`).join('')}
+      </div>
+      <div class="field" style="display:flex;justify-content:space-between;align-items:center;">
+        <label style="margin:0;">Card Border</label>
+        <input type="checkbox" id="cardBorderToggle" ${tc.cardBorder !== false ? 'checked' : ''} style="width:20px;height:20px;">
+      </div>
+
+      <label class="tc-label">Buttons</label>
+      <div class="chip-row">
+        ${[['rounded', 'Rounded'], ['square', 'Square']].map(([v, l]) => `<div class="chip ${tc.buttonShape === v ? 'active' : ''}" data-tc="buttonShape" data-val="${v}">${l}</div>`).join('')}
+      </div>
+      <div class="chip-row">
+        ${[['filled', 'Filled'], ['outlined', 'Outlined']].map(([v, l]) => `<div class="chip ${tc.buttonFill === v ? 'active' : ''}" data-tc="buttonFill" data-val="${v}">${l}</div>`).join('')}
+      </div>
+      <div class="chip-row">
+        ${[['compact', 'Compact'], ['normal', 'Normal'], ['large', 'Large']].map(([v, l]) => `<div class="chip ${tc.buttonSize === v ? 'active' : ''}" data-tc="buttonSize" data-val="${v}">${l}</div>`).join('')}
+      </div>
+
+      <label class="tc-label">Dashboard Density</label>
+      <div class="chip-row">
+        ${[['comfortable', 'Comfortable'], ['compact', 'Compact']].map(([v, l]) => `<div class="chip ${tc.dashboardDensity === v ? 'active' : ''}" data-tc="dashboardDensity" data-val="${v}">${l}</div>`).join('')}
+      </div>
+
+      <label class="tc-label">Animations</label>
+      <div class="field" style="display:flex;justify-content:space-between;align-items:center;">
+        <label style="margin:0;">Enable Animations</label>
+        <input type="checkbox" id="animEnabledToggle" ${tc.animationsEnabled !== false ? 'checked' : ''} style="width:20px;height:20px;">
+      </div>
+      <div class="chip-row">
+        ${[['slow', 'Slow'], ['normal', 'Normal'], ['fast', 'Fast']].map(([v, l]) => `<div class="chip ${tc.animationSpeed === v ? 'active' : ''}" data-tc="animationSpeed" data-val="${v}">${l}</div>`).join('')}
+      </div>
+
+      <div class="btn-row" style="margin-top:16px;">
+        <button class="btn btn-outline" id="resetThemeBtn">↺ Reset to Default</button>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" id="exportThemeBtn">⬇ Export Theme</button>
+        <button class="btn btn-ghost" id="importThemeBtn">⬆ Import Theme</button>
+      </div>
+      <input type="file" id="importThemeFile" accept="application/json" style="display:none;">
+      <p style="font-size:11px;color:var(--text-soft);margin:10px 0 0;">Note: icon shapes stay as emoji (works offline, no download needed) and aren't affected by these settings. Changes apply instantly across the whole app.</p>
     </div>
 
     <div style="text-align:center;color:var(--text-soft);font-size:11px;margin-top:20px;">Roop Rental Services App · v1.0</div>
@@ -849,8 +1055,8 @@ function blankCustomer() {
 function newBlankRental() {
   return {
     id: uid(), createdAt: Date.now(),
-    invoiceNumber: nextInvoiceNumber(),
-    invoiceDate: todayISO(),
+    invoiceNumber: '',
+    invoiceDate: '',
     date: todayISO(), time: '10:00',
     customerName: '', customerInvoiceName: '', customerMobile: '', altMobile: '', customerAddress: '', deliveryAddress: '',
     transportMode: '', transporterName: '', transporterMobile: '', vehicleNumber: '',
@@ -861,6 +1067,14 @@ function newBlankRental() {
     actualReturnDate: '', actualReturnTime: '22:00',
     payments: [], kyc: [], archived: false, deleted: false, isDraft: false
   };
+}
+function ensureInvoiceNumber(r) {
+  if (!r.invoiceNumber) {
+    r.invoiceNumber = nextInvoiceNumber();
+    registerInvoiceNumberUsed(r.invoiceNumber);
+  }
+  if (!r.invoiceDate) r.invoiceDate = todayISO();
+  return r.invoiceNumber;
 }
 function blankItem() {
   return { id: uid(), name: '', qty: 1, rentPerDay: 0, returnedQty: 0 };
@@ -880,6 +1094,18 @@ function openRentalForm(existingId) {
   pushModalHistory();
 }
 
+function invoiceNumBlockHTML(r) {
+  if (!r.actualReturnDate) {
+    return `<div class="card" style="font-size:12.5px;color:var(--text-soft);padding:12px 14px;">📋 This is an active rental — no invoice number yet. Once you set a <b>Return Date</b> below, it will automatically be assigned an invoice number and move to the Invoices tab.</div>`;
+  }
+  const previewNum = r.invoiceNumber || nextInvoiceNumber();
+  return `
+  <div class="field-row">
+    <div class="field"><label>Invoice Number</label><input id="f_invoiceNumber" value="${escapeHtml(previewNum)}"></div>
+    <div class="field"><label>Invoice Date</label><input id="f_invoiceDate" type="date" value="${r.invoiceDate || todayISO()}"></div>
+  </div>`;
+}
+
 function rentalFormHTML() {
   const r = formDraft;
   const totalItems = rentalItemsTotal(r);
@@ -890,10 +1116,7 @@ function rentalFormHTML() {
   <div class="modal-handle"></div>
   <div class="page-header"><h2>${state.editingId ? 'Edit Rental' : 'New Rental'}</h2><button class="back-btn" id="closeForm">✕</button></div>
 
-  <div class="field-row">
-    <div class="field"><label>Invoice Number</label><input id="f_invoiceNumber" value="${escapeHtml(r.invoiceNumber || '')}"></div>
-    <div class="field"><label>Invoice Date</label><input id="f_invoiceDate" type="date" value="${r.invoiceDate || todayISO()}"></div>
-  </div>
+  <div id="invoiceNumWrap">${invoiceNumBlockHTML(r)}</div>
 
   <div class="section-title">Customer</div>
   <div class="field" style="position:relative;">
@@ -1127,7 +1350,7 @@ function bindRentalFormEvents() {
   document.getElementById('cancelFormBtn').onclick = closeModal;
 
   const simpleFields = {
-    f_invoiceNumber: 'invoiceNumber', f_invoiceDate: 'invoiceDate', f_customerName: 'customerName', f_customerInvoiceName: 'customerInvoiceName',
+    f_customerName: 'customerName', f_customerInvoiceName: 'customerInvoiceName',
     f_customerMobile: 'customerMobile', f_altMobile: 'altMobile',
     f_customerAddress: 'customerAddress', f_deliveryAddress: 'deliveryAddress', f_transportMode: 'transportMode',
     f_transporterName: 'transporterName', f_transporterMobile: 'transporterMobile', f_vehicleNumber: 'vehicleNumber',
@@ -1303,11 +1526,21 @@ function bindRentalFormEvents() {
     const el = row.lastElementChild;
     if (el && item) el.innerHTML = `Line total: <b>${fmtMoney(itemTotal(item, formDraft))}</b>`;
   }
+  function bindInvoiceNumFields() {
+    const numEl = document.getElementById('f_invoiceNumber');
+    const dateEl = document.getElementById('f_invoiceDate');
+    if (numEl) numEl.addEventListener('input', (e) => { formDraft.invoiceNumber = e.target.value; });
+    if (dateEl) dateEl.addEventListener('input', (e) => { formDraft.invoiceDate = e.target.value; });
+  }
+  bindInvoiceNumFields();
+
   function refreshAll() {
     const daysEl = document.getElementById('rentalDaysDisplay');
     if (daysEl) daysEl.textContent = rentalDays(formDraft);
     refreshFormTotals();
     formDraft.items.forEach(it => updateLineTotal(it.id));
+    document.getElementById('invoiceNumWrap').innerHTML = invoiceNumBlockHTML(formDraft);
+    bindInvoiceNumFields();
   }
   function rerenderCustomItems() {
     document.getElementById('itemsWrap').innerHTML = customItemsHTML(formDraft.items);
@@ -1350,20 +1583,20 @@ function bindRentalFormEvents() {
     if (!formDraft.customerName.trim()) { toast('Please enter customer name.'); return; }
     formDraft.items = formDraft.items.filter(i => i.name && i.name.trim() && Number(i.qty) > 0);
     if (!formDraft.items.length) { toast('Add at least one item with quantity.'); return; }
-    if (!formDraft.invoiceNumber || !formDraft.invoiceNumber.trim()) formDraft.invoiceNumber = nextInvoiceNumber();
     formDraft.isDraft = false;
-    const isNew = !state.editingId;
+    let assignedNow = false;
+    if (formDraft.actualReturnDate && !formDraft.invoiceNumber) {
+      ensureInvoiceNumber(formDraft);
+      assignedNow = true;
+    }
     await dbPut('rentals', formDraft);
     const idx = state.rentals.findIndex(r => r.id === formDraft.id);
     if (idx >= 0) state.rentals[idx] = formDraft; else state.rentals.push(formDraft);
     await upsertCustomerFromRental(formDraft);
     for (const it of formDraft.items) await bumpFrequentItem(it.name);
     state.frequentItems = await dbGetAll('items');
-    if (isNew) {
-      registerInvoiceNumberUsed(formDraft.invoiceNumber);
-      await dbPut('settings', { key: 'main', value: state.settings });
-    }
-    toast('Rental saved.');
+    if (assignedNow) await dbPut('settings', { key: 'main', value: state.settings });
+    toast(assignedNow ? `Returned — Invoice #${formDraft.invoiceNumber} generated.` : 'Rental saved.');
     closeModal();
     route();
   };
@@ -1387,7 +1620,7 @@ function rentalDetailHTML(r) {
   <div class="page-header"><h2>Rental Details</h2><button class="back-btn" id="closeDetail">✕</button></div>
   <div class="card">
     <div class="top"><div class="name">${escapeHtml(r.customerName)}</div><span class="badge ${badge.cls}">${badge.label}</span></div>
-    <div style="font-size:12px;color:var(--amber-dark);font-weight:700;margin-top:2px;">Invoice #${escapeHtml(r.invoiceNumber || '—')}</div>
+    <div style="font-size:12px;color:${r.invoiceNumber ? 'var(--amber-dark)' : 'var(--text-soft)'};font-weight:700;margin-top:2px;">${r.invoiceNumber ? `Invoice #${escapeHtml(r.invoiceNumber)}` : 'Not yet invoiced — set a Return Date'}</div>
     <div style="font-size:13px;line-height:1.8;margin-top:8px;">
       📞 <a href="tel:${r.customerMobile}">${escapeHtml(r.customerMobile || '—')}</a>${r.altMobile ? ' / ' + escapeHtml(r.altMobile) : ''}<br>
       📍 Address: ${escapeHtml(r.customerAddress || '—')}<br>
@@ -1556,17 +1789,21 @@ function bindRentalDetailEvents(r) {
   document.getElementById('closeDetail').onclick = closeModal;
   document.getElementById('editRentalBtn').onclick = () => { closeModal(); openRentalForm(r.id); };
   document.getElementById('whatsappReceiptBtn').onclick = () => sendWhatsApp(r, buildReceiptText(r));
-  document.getElementById('whatsappInvoiceBtn').onclick = () => sendWhatsApp(r, buildInvoiceText(r));
   document.getElementById('copyReceiptBtn').onclick = () => copyToClipboard(buildReceiptText(r));
-  document.getElementById('copyInvoiceBtn').onclick = () => copyToClipboard(buildInvoiceText(r));
-  document.getElementById('printInvoiceBtn').onclick = () => openInvoicePrint(r);
+  function requireReturned(action) {
+    if (!r.actualReturnDate) { toast('Set a Return Date first — this becomes an invoice once the rental is returned.'); return; }
+    action();
+  }
+  document.getElementById('whatsappInvoiceBtn').onclick = () => requireReturned(() => sendWhatsApp(r, buildInvoiceText(r)));
+  document.getElementById('copyInvoiceBtn').onclick = () => requireReturned(() => copyToClipboard(buildInvoiceText(r)));
+  document.getElementById('printInvoiceBtn').onclick = () => requireReturned(() => openInvoicePrint(r));
   document.getElementById('duplicateRentalBtn').onclick = () => {
     closeModal();
     formDraft = JSON.parse(JSON.stringify(r));
     formDraft.id = uid();
     formDraft.createdAt = Date.now();
-    formDraft.invoiceNumber = nextInvoiceNumber();
-    formDraft.invoiceDate = todayISO();
+    formDraft.invoiceNumber = '';
+    formDraft.invoiceDate = '';
     formDraft.date = todayISO();
     formDraft.time = '10:00';
     formDraft.actualReturnDate = ''; formDraft.actualReturnTime = '22:00';
@@ -1608,8 +1845,14 @@ function bindRentalDetailEvents(r) {
 /* ---------- Invoice Print ---------- */
 function openInvoicePrint(r) {
   const s = state.settings;
+  const tc = s.themeConfig;
+  const accent = tc.accentColor || '#f59e0b';
+  const bandC1 = shadeHex(accent, -0.72);
+  const bandC2 = shadeHex(accent, -0.6);
+  const tintBg = shadeHex(accent, 0.92);
+  const tintBorder = shadeHex(accent, 0.65);
   const w = window.open('', '_blank');
-  const rows = r.items.map((it, i) => `<tr style="background:${i % 2 ? '#fff7ec' : '#ffffff'}"><td>${escapeHtml(it.name)}</td><td style="text-align:center;">${it.qty}</td><td style="text-align:right;">${fmtMoney(it.rentPerDay)}</td><td style="text-align:right;">${fmtMoney(itemTotal(it, r))}</td></tr>`).join('');
+  const rows = r.items.map((it, i) => `<tr style="background:${i % 2 ? tintBg : '#ffffff'}"><td>${escapeHtml(it.name)}</td><td style="text-align:center;">${it.qty}</td><td style="text-align:right;">${fmtMoney(it.rentPerDay)}</td><td style="text-align:right;">${fmtMoney(itemTotal(it, r))}</td></tr>`).join('');
   const due = rentalDue(r);
   const stampSigBlock = `
     <div style="display:flex;justify-content:flex-end;gap:24px;margin-top:36px;align-items:flex-end;">
@@ -1622,26 +1865,26 @@ function openInvoicePrint(r) {
       * { box-sizing: border-box; }
       body{font-family:Arial,'Segoe UI',sans-serif;padding:0;margin:0;color:#161b33;background:#f3f4fa;}
       .sheet{max-width:720px;margin:0 auto;background:#fff;}
-      .band{background:linear-gradient(135deg,#1e2952,#2b3968);color:#fff;padding:26px 32px 20px;position:relative;overflow:hidden;}
-      .band::after{content:'';position:absolute;right:-40px;top:-40px;width:160px;height:160px;background:rgba(245,158,11,.25);border-radius:50%;}
+      .band{background:linear-gradient(135deg,${bandC1},${bandC2});color:#fff;padding:26px 32px 20px;position:relative;overflow:hidden;}
+      .band::after{content:'';position:absolute;right:-40px;top:-40px;width:160px;height:160px;background:${accent}40;border-radius:50%;}
       .band-top{display:flex;align-items:center;gap:14px;}
       .band-top img{height:52px;width:52px;object-fit:contain;border-radius:12px;background:#fff;padding:4px;}
       .band h1{margin:0;font-size:21px;letter-spacing:.3px;}
       .band .tagline{opacity:.9;font-size:11.5px;margin-top:3px;font-style:italic;}
       .band .sub{opacity:.85;font-size:12px;margin-top:8px;line-height:1.6;}
-      .invoice-tag{display:inline-block;background:#f59e0b;color:#2b1400;font-weight:800;font-size:12px;padding:4px 12px;border-radius:20px;margin-top:10px;}
+      .invoice-tag{display:inline-block;background:${accent};color:${isDarkColor(accent) ? '#fff' : '#2b1400'};font-weight:800;font-size:12px;padding:4px 12px;border-radius:20px;margin-top:10px;}
       .body{padding:24px 32px 8px;}
-      .meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 24px;background:#fff7ec;border:1px solid #f3d9ad;border-radius:10px;padding:14px 16px;margin-bottom:18px;font-size:13px;}
-      .meta-grid div span{display:block;color:#8a5a2b;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;font-weight:700;}
+      .meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 24px;background:${tintBg};border:1px solid ${tintBorder};border-radius:10px;padding:14px 16px;margin-bottom:18px;font-size:13px;}
+      .meta-grid div span{display:block;color:${shadeHex(accent, -0.4)};font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;font-weight:700;}
       table{width:100%;border-collapse:collapse;margin-top:4px;border-radius:10px;overflow:hidden;}
-      th{background:#1e2952;color:#fff;padding:10px 8px;font-size:12px;text-align:left;}
+      th{background:${bandC1};color:#fff;padding:10px 8px;font-size:12px;text-align:left;}
       th:nth-child(2){text-align:center;} th:nth-child(3),th:nth-child(4){text-align:right;}
       td{padding:9px 8px;font-size:13px;border-bottom:1px solid #eee;}
-      .totals{margin-top:16px;width:100%;max-width:320px;margin-left:auto;background:#fff7ec;border:1px solid #f3d9ad;border-radius:10px;padding:14px 16px;}
+      .totals{margin-top:16px;width:100%;max-width:320px;margin-left:auto;background:${tintBg};border:1px solid ${tintBorder};border-radius:10px;padding:14px 16px;}
       .totals div{display:flex;justify-content:space-between;padding:4px 0;font-size:13px;}
-      .totals .grand{font-weight:800;font-size:16px;border-top:2px solid #f59e0b;padding-top:8px;margin-top:6px;color:#1e2952;}
+      .totals .grand{font-weight:800;font-size:16px;border-top:2px solid ${accent};padding-top:8px;margin-top:6px;color:${bandC1};}
       .terms{margin-top:22px;background:#f7f8fa;border:1px solid #e4e6f2;border-radius:10px;padding:14px 16px;}
-      .terms h3{margin:0 0 8px;font-size:13px;color:#1e2952;}
+      .terms h3{margin:0 0 8px;font-size:13px;color:${bandC1};}
       .terms ol{margin:0;padding-left:18px;}
       .terms li{font-size:11.5px;color:#444;line-height:1.6;margin-bottom:3px;}
       @media print { body{background:#fff;} .sheet{max-width:100%;} }
@@ -1829,22 +2072,118 @@ function bindSettingsEvents() {
   document.getElementById('importFile').addEventListener('change', (e) => {
     if (e.target.files[0]) importBackup(e.target.files[0]);
   });
-  document.querySelectorAll('.theme-chip').forEach(chip => {
+  async function saveThemeConfig() {
+    await dbPut('settings', { key: 'main', value: state.settings });
+  }
+
+  // generic chip-based theme controls: mode, font size/family/weight, card elevation/padding, button shape/fill/size, dashboard density, animation speed
+  document.querySelectorAll('[data-tc]').forEach(chip => {
     chip.onclick = async () => {
-      state.settings.theme = chip.dataset.themePick;
-      applyTheme();
-      await dbPut('settings', { key: 'main', value: state.settings });
+      const key = chip.dataset.tc;
+      const val = chip.dataset.val;
+      state.settings.themeConfig[key] = val;
+      applyThemeConfig();
+      await saveThemeConfig();
       route();
     };
   });
+
+  // accent presets
+  document.querySelectorAll('[data-accent-preset]').forEach(sw => {
+    sw.onclick = async () => {
+      state.settings.themeConfig.accentPreset = sw.dataset.accentPreset;
+      state.settings.themeConfig.accentColor = sw.dataset.accentHex;
+      applyThemeConfig();
+      await saveThemeConfig();
+      route();
+    };
+  });
+  const accentCustomPicker = document.getElementById('accentCustomPicker');
+  if (accentCustomPicker) accentCustomPicker.addEventListener('input', async (e) => {
+    state.settings.themeConfig.accentPreset = 'custom';
+    state.settings.themeConfig.accentColor = e.target.value;
+    applyThemeConfig();
+    await saveThemeConfig();
+  });
+  if (accentCustomPicker) accentCustomPicker.addEventListener('change', () => route());
+
+  // background pickers
+  const screenBgPicker = document.getElementById('screenBgPicker');
+  const cardBgPicker = document.getElementById('cardBgPicker');
+  if (screenBgPicker) screenBgPicker.addEventListener('input', async (e) => { state.settings.themeConfig.screenBg = e.target.value; applyThemeConfig(); await saveThemeConfig(); });
+  if (cardBgPicker) cardBgPicker.addEventListener('input', async (e) => { state.settings.themeConfig.cardBg = e.target.value; applyThemeConfig(); await saveThemeConfig(); });
+  const clearBgBtn = document.getElementById('clearBgBtn');
+  if (clearBgBtn) clearBgBtn.onclick = async () => {
+    state.settings.themeConfig.screenBg = ''; state.settings.themeConfig.cardBg = '';
+    applyThemeConfig(); await saveThemeConfig(); route();
+  };
+
+  // card radius slider
+  const radiusSlider = document.getElementById('cardRadiusSlider');
+  if (radiusSlider) radiusSlider.addEventListener('input', async (e) => {
+    state.settings.themeConfig.cardRadius = Number(e.target.value);
+    applyThemeConfig();
+    e.target.previousElementSibling.querySelector('span').textContent = e.target.value + 'px';
+    await saveThemeConfig();
+  });
+
+  // card border toggle
+  const cardBorderToggle = document.getElementById('cardBorderToggle');
+  if (cardBorderToggle) cardBorderToggle.onchange = async (e) => {
+    state.settings.themeConfig.cardBorder = e.target.checked;
+    applyThemeConfig();
+    await saveThemeConfig();
+  };
+
+  // animations enabled toggle
+  const animEnabledToggle = document.getElementById('animEnabledToggle');
+  if (animEnabledToggle) animEnabledToggle.onchange = async (e) => {
+    state.settings.themeConfig.animationsEnabled = e.target.checked;
+    applyThemeConfig();
+    await saveThemeConfig();
+  };
+
+  // reset / export / import theme
+  const resetThemeBtn = document.getElementById('resetThemeBtn');
+  if (resetThemeBtn) resetThemeBtn.onclick = async () => {
+    if (!confirm('Reset all theme customization to default?')) return;
+    state.settings.themeConfig = defaultThemeConfig();
+    applyThemeConfig();
+    await saveThemeConfig();
+    route();
+  };
+  const exportThemeBtn = document.getElementById('exportThemeBtn');
+  if (exportThemeBtn) exportThemeBtn.onclick = () => {
+    const blob = new Blob([JSON.stringify(state.settings.themeConfig, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `roop-rental-theme-${todayISO()}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+    toast('Theme exported.');
+  };
+  const importThemeBtn = document.getElementById('importThemeBtn');
+  if (importThemeBtn) importThemeBtn.onclick = () => document.getElementById('importThemeFile').click();
+  const importThemeFile = document.getElementById('importThemeFile');
+  if (importThemeFile) importThemeFile.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const imported = JSON.parse(reader.result);
+        state.settings.themeConfig = { ...defaultThemeConfig(), ...imported };
+        applyThemeConfig();
+        await saveThemeConfig();
+        toast('Theme imported.');
+        route();
+      } catch (err) { toast('Invalid theme file.'); }
+    };
+    reader.readAsText(file);
+  });
+
   document.getElementById('uploadLogoBtn').onclick = () => document.getElementById('logoFile').click();
   document.getElementById('logoFile').addEventListener('change', (e) => { if (e.target.files[0]) readImageToSettings(e.target.files[0], 'logoImg'); });
-}
-
-function applyTheme() {
-  document.body.setAttribute('data-theme', state.settings.theme);
-  const icons = { light: '🌙', dark: '◐', gray: '☀️' };
-  document.getElementById('themeToggle').textContent = icons[state.settings.theme] || '🌙';
 }
 
 function updateHeaderLogo() {
@@ -1914,12 +2253,23 @@ async function loadAllData() {
   state.frequentItems = (await dbGetAll('items')).sort((a, b) => (b.count || 0) - (a.count || 0)).slice(0, 12);
   const savedSettings = await dbGet('settings', 'main');
   if (savedSettings) state.settings = { ...state.settings, ...savedSettings.value };
+  if (!state.settings.themeConfig) {
+    const tc = defaultThemeConfig();
+    // migrate old simple theme field (light/dark/gray) if it was set previously
+    if (state.settings.theme === 'dark') tc.mode = 'dark';
+    else if (state.settings.theme === 'light') tc.mode = 'light';
+    state.settings.themeConfig = tc;
+  } else {
+    // fill in any new keys added since the user's last save, without losing their choices
+    state.settings.themeConfig = { ...defaultThemeConfig(), ...state.settings.themeConfig };
+  }
 }
 
 async function init() {
   await openDB();
   await loadAllData();
-  applyTheme();
+  applyThemeConfig();
+  bindSystemThemeListener();
   document.getElementById('headerTitle').textContent = state.settings.businessName;
   document.getElementById('headerSub').textContent = state.settings.address + ' · ' + state.settings.ownerName;
   updateHeaderLogo();
@@ -1936,10 +2286,10 @@ async function init() {
     });
   });
   document.getElementById('themeToggle').addEventListener('click', () => {
-    const order = ['light', 'dark', 'gray'];
-    const idx = order.indexOf(state.settings.theme);
-    state.settings.theme = order[(idx + 1) % order.length];
-    applyTheme();
+    const order = ['light', 'dark', 'system'];
+    const idx = order.indexOf(state.settings.themeConfig.mode);
+    state.settings.themeConfig.mode = order[(idx + 1) % order.length];
+    applyThemeConfig();
     dbPut('settings', { key: 'main', value: state.settings });
   });
   document.getElementById('globalSearch').addEventListener('input', (e) => {
