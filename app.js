@@ -162,11 +162,11 @@ function escapeHtml(s) {
 }
 
 const DEFAULT_ITEM_CATALOG = [
-  { name: 'H Frames', rate: 50 }, { name: 'Bracings', rate: 0 }, { name: 'Walkway Plank', rate: 20 },
-  { name: 'Wheels', rate: 15 }, { name: 'Jack', rate: 25 }, { name: 'Ladder 6ft', rate: 30 },
-  { name: 'Ladder 8ft', rate: 50 }, { name: 'Ladder 10ft', rate: 100 }, { name: 'Ladder 12ft', rate: 120 },
-  { name: 'Ladder 15ft', rate: 200 }, { name: 'Ladder 18ft', rate: 300 }, { name: 'Ladder 20ft', rate: 300 },
-  { name: 'Sidi 20ft', rate: 250 }, { name: 'Drum', rate: 50 }, { name: 'Jhula', rate: 150 }
+  { name: 'H Frames', rate: 50, stock: 0 }, { name: 'Bracings', rate: 0, stock: 0 }, { name: 'Walkway Plank', rate: 20, stock: 0 },
+  { name: 'Wheels', rate: 15, stock: 0 }, { name: 'Jack', rate: 25, stock: 0 }, { name: 'Ladder 6ft', rate: 30, stock: 0 },
+  { name: 'Ladder 8ft', rate: 50, stock: 0 }, { name: 'Ladder 10ft', rate: 100, stock: 0 }, { name: 'Ladder 12ft', rate: 120, stock: 0 },
+  { name: 'Ladder 15ft', rate: 200, stock: 0 }, { name: 'Ladder 18ft', rate: 300, stock: 0 }, { name: 'Ladder 20ft', rate: 300, stock: 0 },
+  { name: 'Sidi 20ft', rate: 250, stock: 0 }, { name: 'Drum', rate: 50, stock: 0 }, { name: 'Jhula', rate: 150, stock: 0 }
 ];
 function getItemCatalog() {
   return state.settings.itemCatalog && state.settings.itemCatalog.length ? state.settings.itemCatalog : DEFAULT_ITEM_CATALOG;
@@ -180,6 +180,7 @@ function getItemRatesMap() {
 /* ---------- Global State ---------- */
 const state = {
   view: 'rentals',
+  settingsPage: null,
   rentals: [],
   customers: [],
   frequentItems: [],
@@ -211,7 +212,11 @@ const state = {
       'Kindly preserve this invoice for future reference.'
     ],
     themeConfig: null, // filled in with defaultThemeConfig() below at first run
-    itemCatalog: null // filled in with DEFAULT_ITEM_CATALOG below at first run
+    itemCatalog: null, // filled in with DEFAULT_ITEM_CATALOG below at first run
+    fingerprintEnabled: false,
+    fingerprintCredentialId: '',
+    whatsappReceiptTemplate: '',
+    whatsappInvoiceTemplate: ''
   },
   searchQuery: '',
   filter: 'active',
@@ -244,7 +249,7 @@ const ANIM_SPEED_MAP = { slow: '.32s', normal: '.15s', fast: '.06s' };
 
 function defaultThemeConfig() {
   return {
-    mode: 'light', // 'light' | 'dark' | 'system'
+    mode: 'light', // 'light' | 'dark' | 'gray' | 'system'
     accentPreset: 'orange',
     accentColor: ACCENT_PRESETS.orange,
     screenBg: '', cardBg: '',
@@ -260,6 +265,32 @@ function hexToRgb(hex) {
   const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || '');
   if (!m) return { r: 245, g: 158, b: 11 };
   return { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) };
+}
+function rgbToHex(r, g, b) {
+  return '#' + [r, g, b].map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+}
+function hslToHex(h, s, l) {
+  s /= 100; l /= 100;
+  const k = n => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return rgbToHex(255 * f(0), 255 * f(8), 255 * f(4));
+}
+/* Accepts #hex, rgb(), rgba(), hsl() — returns a clean #rrggbb hex, or null if unparseable */
+function parseColorToHex(input) {
+  if (!input) return null;
+  const s = input.trim();
+  let m = /^#?([a-f\d]{3}|[a-f\d]{6})$/i.exec(s);
+  if (m) {
+    let hex = m[1];
+    if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+    return '#' + hex.toLowerCase();
+  }
+  m = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*[\d.]+\s*)?\)$/i.exec(s);
+  if (m) return rgbToHex(+m[1], +m[2], +m[3]);
+  m = /^hsl\(\s*(\d+)\s*,\s*(\d+)%\s*,\s*(\d+)%\s*\)$/i.exec(s);
+  if (m) return hslToHex(+m[1], +m[2], +m[3]);
+  return null;
 }
 function shadeHex(hex, percent) {
   const { r, g, b } = hexToRgb(hex);
@@ -327,7 +358,7 @@ function applyThemeConfig() {
   // animations
   root.setProperty('--transition-duration', tc.animationsEnabled === false ? '0s' : (ANIM_SPEED_MAP[tc.animationSpeed] || ANIM_SPEED_MAP.normal));
 
-  const icons = { light: '🌙', dark: '☀️', system: '⚙️' };
+  const icons = { light: '🌙', dark: '◐', gray: '⚙️', system: '⚙️' };
   const btn = document.getElementById('themeToggle');
   if (btn) btn.textContent = icons[tc.mode] || '🌙';
 }
@@ -438,8 +469,7 @@ function computeStats() {
 
 function renderDashboard() {
   const s = computeStats();
-  const active = state.rentals.filter(r => !r.deleted && !r.archived);
-  const recent = [...active].sort((a, b) => b.createdAt - a.createdAt).slice(0, 7);
+  const catalog = getItemCatalog();
   return `
     <div class="stat-grid">
       <div class="stat-card accent"><div class="num">${s.totalActive}</div><div class="lbl">Active Rentals</div></div>
@@ -447,9 +477,49 @@ function renderDashboard() {
       <div class="stat-card"><div class="num" style="color:var(--brown)">${s.pendingPayments}</div><div class="lbl">Pending Payments</div></div>
       <div class="stat-card"><div class="num">${fmtMoney(s.monthlyRevenue)}</div><div class="lbl">This Month Revenue</div></div>
     </div>
-    <div class="section-title">Recent Rentals <a data-nav="rentals">View all</a></div>
-    ${recent.length ? recent.map(rentalCardHTML).join('') : '<div class="empty">No rentals yet. Tap + to add one.</div>'}
+    <div class="section-title">📦 Stock <span style="font-weight:400;color:var(--text-soft);font-size:11.5px;">(auto-updates as items go out/return)</span></div>
+    ${catalog.length ? `<div class="card"><div id="stockList">${stockRowsHTML(catalog)}</div></div>` : '<div class="empty">No items in your catalog yet — add some in Settings → Manage Items.</div>'}
   `;
+}
+
+function stockRowsHTML(catalog) {
+  return catalog.map((it, idx) => `
+    <div class="stock-row" data-stock-idx="${idx}">
+      <div class="stock-name">${escapeHtml(it.name)}</div>
+      <div class="stock-qty ${(it.stock || 0) <= 0 ? 'low' : ''}">${it.stock || 0}</div>
+      <button type="button" class="stock-btn stock-minus" data-idx="${idx}" title="Manual stock out">− Out</button>
+      <button type="button" class="stock-btn stock-plus" data-idx="${idx}" title="Manual stock in">+ In</button>
+    </div>`).join('');
+}
+
+async function adjustStock(itemName, delta) {
+  const catalog = getItemCatalog();
+  const idx = catalog.findIndex(i => i.name === itemName);
+  if (idx < 0) return;
+  catalog[idx].stock = (catalog[idx].stock || 0) + delta;
+  state.settings.itemCatalog = catalog;
+  await dbPut('settings', { key: 'main', value: state.settings });
+}
+
+function bindStockRows() {
+  document.querySelectorAll('.stock-minus').forEach(btn => {
+    btn.onclick = async () => {
+      const amt = Number(prompt('Reduce stock by how many? (manual stock-out)', '1'));
+      if (!amt || amt <= 0) return;
+      const catalog = getItemCatalog();
+      await adjustStock(catalog[Number(btn.dataset.idx)].name, -amt);
+      route();
+    };
+  });
+  document.querySelectorAll('.stock-plus').forEach(btn => {
+    btn.onclick = async () => {
+      const amt = Number(prompt('Add how many back to stock? (manual stock-in)', '1'));
+      if (!amt || amt <= 0) return;
+      const catalog = getItemCatalog();
+      await adjustStock(catalog[Number(btn.dataset.idx)].name, amt);
+      route();
+    };
+  });
 }
 
 function truncate(s, n) {
@@ -499,13 +569,12 @@ function filterRentals() {
     });
   }
   const sortFns = {
-    newest: (a, b) => b.createdAt - a.createdAt,
-    oldest: (a, b) => a.createdAt - b.createdAt,
+    newest: (a, b) => (b.date || '').localeCompare(a.date || '') || b.createdAt - a.createdAt,
+    oldest: (a, b) => (a.date || '').localeCompare(b.date || '') || a.createdAt - b.createdAt,
     nameAZ: (a, b) => (a.customerName || '').localeCompare(b.customerName || ''),
     nameZA: (a, b) => (b.customerName || '').localeCompare(a.customerName || ''),
     highestDue: (a, b) => rentalDue(b) - rentalDue(a),
-    lowestDue: (a, b) => rentalDue(a) - rentalDue(b),
-    returnDate: (a, b) => (a.actualReturnDate || '').localeCompare(b.actualReturnDate || '')
+    lowestDue: (a, b) => rentalDue(a) - rentalDue(b)
   };
   list.sort(sortFns[state.sort] || sortFns.newest);
   return list;
@@ -516,8 +585,8 @@ function renderRentals() {
   const filters = [
     ['active', 'Rented'], ['returned', 'Returned'], ['pending', 'Payment Due'], ['trash', 'Trash'], ['all', 'All']
   ];
-  const sorts = [['newest', 'Newest'], ['oldest', 'Oldest'], ['nameAZ', 'Name A-Z'], ['nameZA', 'Name Z-A'],
-    ['highestDue', 'Highest Due'], ['lowestDue', 'Lowest Due'], ['returnDate', 'Return Date']];
+  const sorts = [['newest', 'Rental Date: New to Old'], ['oldest', 'Rental Date: Old to New'], ['nameAZ', 'Name A-Z'], ['nameZA', 'Name Z-A'],
+    ['highestDue', 'Highest Due'], ['lowestDue', 'Lowest Due']];
   return `
     <div class="page-header"><h2>Rentals</h2>
       <select id="sortSelect" style="border:1px solid var(--border);border-radius:10px;padding:7px;background:var(--card);color:var(--text);font-size:12px;">
@@ -852,19 +921,54 @@ function renderReports() {
 function itemCatalogRowsHTML(catalog) {
   return catalog.map((it, idx) => `
     <div class="catalog-row" data-cat-idx="${idx}">
+      <div class="catalog-reorder">
+        <button type="button" class="cat-up" data-idx="${idx}" ${idx === 0 ? 'disabled' : ''}>▲</button>
+        <button type="button" class="cat-down" data-idx="${idx}" ${idx === catalog.length - 1 ? 'disabled' : ''}>▼</button>
+      </div>
       <input class="cat-name" data-idx="${idx}" value="${escapeHtml(it.name)}" placeholder="Item name">
       <input class="cat-rate" type="number" data-idx="${idx}" value="${it.rate}" placeholder="Rate">
+      <input class="cat-stock" type="number" data-idx="${idx}" value="${it.stock || 0}" placeholder="Stock">
       <button type="button" class="cat-del" data-idx="${idx}">✕</button>
     </div>`).join('');
 }
 
-function renderSettings() {
-  const s = state.settings;
-  const tc = s.themeConfig;
-  const mode = effectiveThemeMode();
+const SETTINGS_MENU = [
+  { id: 'business', icon: '🏢', title: 'Business Details', desc: 'Name, address, contact info, GST' },
+  { id: 'logo', icon: '🖼️', title: 'App Logo', desc: 'Shown in header and on invoices' },
+  { id: 'signature', icon: '✍️', title: 'Invoice Signature & Stamp', desc: 'Auto-added to every printed invoice' },
+  { id: 'invoicing', icon: '🧾', title: 'Invoice Numbering', desc: 'Prefix and sequence for invoice numbers' },
+  { id: 'items', icon: '📦', title: 'Manage Items', desc: 'Rental catalog, rates, and stock' },
+  { id: 'applock', icon: '🔒', title: 'App Lock', desc: 'PIN or fingerprint to open the app' },
+  { id: 'backup', icon: '💾', title: 'Backup & Restore', desc: 'Export or import all your data' },
+  { id: 'theme', icon: '🎨', title: 'Theme Customization', desc: 'Colors, fonts, layout, and more' },
+  { id: 'terms', icon: '📜', title: 'Terms & Conditions', desc: 'Shown on every printed invoice' },
+  { id: 'whatsapp', icon: '💬', title: 'WhatsApp Templates', desc: 'Edit your Receipt and Invoice messages' }
+];
+
+function settingsPageHeader(title) {
+  return `<div class="page-header"><button class="back-btn" id="settingsBackBtn">←</button><h2>${title}</h2></div>`;
+}
+
+function renderSettingsMenu() {
   return `
     <div class="page-header"><h2>Settings</h2></div>
-    <div class="section-title">Business Details</div>
+    ${SETTINGS_MENU.map(m => `
+      <div class="card settings-menu-item" data-settings-page="${m.id}">
+        <div class="sm-icon">${m.icon}</div>
+        <div class="sm-text">
+          <div class="sm-title">${m.title}</div>
+          <div class="sm-desc">${m.desc}</div>
+        </div>
+        <div class="sm-arrow">›</div>
+      </div>`).join('')}
+    <div style="text-align:center;color:var(--text-soft);font-size:11px;margin-top:20px;">Roop Rental Services App · v1.0</div>
+  `;
+}
+
+function renderSettingsBusiness() {
+  const s = state.settings;
+  return `
+    ${settingsPageHeader('Business Details')}
     <div class="card">
       <div class="field"><label>Business Name</label><input id="setBizName" value="${escapeHtml(s.businessName)}"></div>
       <div class="field"><label>Tagline</label><input id="setTagline" value="${escapeHtml(s.tagline || '')}"></div>
@@ -879,16 +983,26 @@ function renderSettings() {
       </div>
       <button class="btn btn-primary" id="saveSettingsBtn">Save Business Details</button>
     </div>
+  `;
+}
 
-    <div class="section-title">App Logo</div>
+function renderSettingsLogo() {
+  const s = state.settings;
+  return `
+    ${settingsPageHeader('App Logo')}
     <div class="card">
       <p style="font-size:12px;color:var(--text-soft);margin-top:0;">Shown in the app header and on your printed invoices.</p>
       ${s.logoImg ? `<img src="${s.logoImg}" style="max-height:60px;display:block;margin-bottom:8px;border-radius:10px;">` : ''}
       <button type="button" class="btn btn-ghost btn-sm" id="uploadLogoBtn">${s.logoImg ? 'Replace' : 'Upload'} Logo</button>
       <input type="file" id="logoFile" accept="image/*" style="display:none;">
     </div>
+  `;
+}
 
-    <div class="section-title">Invoice Signature &amp; Stamp</div>
+function renderSettingsSignature() {
+  const s = state.settings;
+  return `
+    ${settingsPageHeader('Invoice Signature & Stamp')}
     <div class="card">
       <p style="font-size:12px;color:var(--text-soft);margin-top:0;">Uploaded once — every invoice you print will automatically include your stamp and signature.</p>
       <div class="field-row">
@@ -906,10 +1020,15 @@ function renderSettings() {
         </div>
       </div>
     </div>
+  `;
+}
 
-    <div class="section-title">Invoice Numbering</div>
+function renderSettingsInvoicing() {
+  const s = state.settings;
+  return `
+    ${settingsPageHeader('Invoice Numbering')}
     <div class="card">
-      <p style="font-size:12px;color:var(--text-soft);margin-top:0;">Every new rental automatically gets the next invoice number. Change these only if you need to realign the sequence.</p>
+      <p style="font-size:12px;color:var(--text-soft);margin-top:0;">Every rental automatically gets the next invoice number once it's returned. Change these only if you need to realign the sequence.</p>
       <div class="field-row">
         <div class="field"><label>Prefix</label><input id="setInvoicePrefix" value="${escapeHtml(s.invoicePrefix || 'RR')}"></div>
         <div class="field"><label>Next Number</label><input id="setInvoiceCounter" type="number" value="${s.invoiceCounter || 1}"></div>
@@ -917,18 +1036,27 @@ function renderSettings() {
       <div style="font-size:12px;color:var(--text-soft);margin:-6px 0 10px;">Next invoice will be: <b>${nextInvoiceNumber()}</b></div>
       <button class="btn btn-outline" id="saveInvoiceNumBtn">Save Numbering</button>
     </div>
+  `;
+}
 
-    <div class="section-title">Manage Items <span style="font-weight:400;color:var(--text-soft);font-size:11.5px;">(rental catalog)</span></div>
+function renderSettingsItems() {
+  return `
+    ${settingsPageHeader('Manage Items')}
     <div class="card">
-      <p style="font-size:12px;color:var(--text-soft);margin-top:0;">These items and rates show up pre-filled every time you create a new rental, so you only enter quantity. Add, rename, re-price, or remove any of them.</p>
+      <p style="font-size:12px;color:var(--text-soft);margin-top:0;">These items, rates, and stock levels show up pre-filled every time you create a new rental. Use the arrows to reorder.</p>
       <div id="itemCatalogList">${itemCatalogRowsHTML(getItemCatalog())}</div>
       <div class="btn-row">
         <button class="btn btn-ghost btn-sm" id="addCatalogItemBtn" type="button">+ Add Item</button>
       </div>
       <button class="btn btn-primary" id="saveCatalogBtn" style="margin-top:8px;">Save Items</button>
     </div>
+  `;
+}
 
-    <div class="section-title">App Lock</div>
+function renderSettingsAppLock() {
+  const s = state.settings;
+  return `
+    ${settingsPageHeader('App Lock')}
     <div class="card">
       <div class="field" style="display:flex;justify-content:space-between;align-items:center;">
         <label style="margin:0;">Enable PIN Lock</label>
@@ -939,8 +1067,19 @@ function renderSettings() {
         <button class="btn btn-outline" id="savePinBtn">Save PIN</button>
       </div>
     </div>
+    <div class="card">
+      <div class="field" style="display:flex;justify-content:space-between;align-items:center;">
+        <label style="margin:0;">Enable Fingerprint Lock</label>
+        <input type="checkbox" id="fingerprintToggle" ${s.fingerprintEnabled ? 'checked' : ''} style="width:20px;height:20px;">
+      </div>
+      <p style="font-size:11.5px;color:var(--text-soft);margin:8px 0 0;">Uses your phone's built-in fingerprint/face unlock through the browser. If your device or browser doesn't support it, you'll get a message when you try to enable it.</p>
+    </div>
+  `;
+}
 
-    <div class="section-title">Backup &amp; Restore</div>
+function renderSettingsBackup() {
+  return `
+    ${settingsPageHeader('Backup & Restore')}
     <div class="card">
       <p style="font-size:12.5px;color:var(--text-soft);margin-top:0;">Data is stored only on this phone. Export a backup file regularly and keep it safe (Google Drive, WhatsApp to self, etc). Direct Google Drive sync isn't available in this app version — use manual export/import instead.</p>
       <div class="btn-row">
@@ -949,13 +1088,21 @@ function renderSettings() {
       </div>
       <input type="file" id="importFile" accept="application/json" style="display:none;">
     </div>
+  `;
+}
 
-    <div class="section-title">🎨 Theme Customization</div>
+function renderSettingsTheme() {
+  const s = state.settings;
+  const tc = s.themeConfig;
+  const mode = effectiveThemeMode();
+  return `
+    ${settingsPageHeader('Theme Customization')}
     <div class="card">
       <label class="tc-label">Theme Mode</label>
       <div class="chip-row">
         <div class="chip theme-chip ${tc.mode === 'light' ? 'active' : ''}" data-tc="mode" data-val="light">☀️ Light</div>
         <div class="chip theme-chip ${tc.mode === 'dark' ? 'active' : ''}" data-tc="mode" data-val="dark">🌙 Dark</div>
+        <div class="chip theme-chip ${tc.mode === 'gray' ? 'active' : ''}" data-tc="mode" data-val="gray">◐ Gray</div>
         <div class="chip theme-chip ${tc.mode === 'system' ? 'active' : ''}" data-tc="mode" data-val="system">⚙️ System</div>
       </div>
 
@@ -968,6 +1115,14 @@ function renderSettings() {
           🎨<input type="color" id="accentCustomPicker" value="${tc.accentColor}" style="opacity:0;position:absolute;width:1px;height:1px;">
         </label>
       </div>
+      <div class="field-row">
+        <div class="field">
+          <label>Custom Color Code</label>
+          <input id="accentCodeInput" value="${tc.accentColor}" placeholder="#2196F3, rgb(33,150,243), hsl(210,90%,56%)">
+        </div>
+        <button class="btn btn-outline btn-sm" id="applyAccentCodeBtn" type="button" style="align-self:flex-end;margin-bottom:12px;">Apply</button>
+      </div>
+      <p id="accentCodeError" style="font-size:11px;color:var(--red);margin:-8px 0 8px;display:none;">Couldn't read that color — try #hex, rgb(), rgba(), or hsl().</p>
 
       <label class="tc-label">Background Colors <span style="font-weight:400;color:var(--text-soft);">(leave blank for theme default)</span></label>
       <div class="field-row">
@@ -1038,11 +1193,70 @@ function renderSettings() {
         <button class="btn btn-ghost" id="importThemeBtn">⬆ Import Theme</button>
       </div>
       <input type="file" id="importThemeFile" accept="application/json" style="display:none;">
-      <p style="font-size:11px;color:var(--text-soft);margin:10px 0 0;">Note: icon shapes stay as emoji (works offline, no download needed) and aren't affected by these settings. Changes apply instantly across the whole app.</p>
+      <p style="font-size:11px;color:var(--text-soft);margin:10px 0 0;">Note: icon shapes stay as emoji (works offline, no download needed) and aren't affected by these settings.</p>
     </div>
-
-    <div style="text-align:center;color:var(--text-soft);font-size:11px;margin-top:20px;">Roop Rental Services App · v1.0</div>
   `;
+}
+
+function termsRowsHTML(terms) {
+  return (terms || []).map((t, idx) => `
+    <div class="catalog-row" data-term-idx="${idx}">
+      <textarea class="term-text" data-idx="${idx}" rows="2" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:9px;background:var(--card);color:var(--text);font-size:12.5px;">${escapeHtml(t)}</textarea>
+      <button type="button" class="term-del" data-idx="${idx}">✕</button>
+    </div>`).join('');
+}
+
+function renderSettingsTerms() {
+  return `
+    ${settingsPageHeader('Terms & Conditions')}
+    <div class="card">
+      <p style="font-size:12px;color:var(--text-soft);margin-top:0;">These lines print at the bottom of every invoice, numbered in order.</p>
+      <div id="termsList">${termsRowsHTML(state.settings.invoiceTerms)}</div>
+      <div class="btn-row">
+        <button class="btn btn-ghost btn-sm" id="addTermBtn" type="button">+ Add Clause</button>
+      </div>
+      <button class="btn btn-primary" id="saveTermsBtn" style="margin-top:8px;">Save Terms</button>
+    </div>
+  `;
+}
+
+function renderSettingsWhatsApp() {
+  const s = state.settings;
+  const placeholders = '{businessName} {tagline} {ownerName} {phone} {address} {customerName} {mobile} {deliveryAddress} {items} {advance} {invoiceNumber} {rentalDate} {returnDate} {rentalDays} {totalCharges} {balance} {paymentStatus}';
+  return `
+    ${settingsPageHeader('WhatsApp Templates')}
+    <div class="card">
+      <p style="font-size:12px;color:var(--text-soft);margin-top:0;">Customize the exact wording sent for future entries. Available placeholders (keep the curly braces):</p>
+      <p style="font-size:10.5px;color:var(--text-soft);background:var(--bg);padding:8px;border-radius:8px;word-break:break-word;">${placeholders}</p>
+      <label class="tc-label">Receipt Message</label>
+      <textarea id="waReceiptTemplate" rows="10" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--card);color:var(--text);font-size:12.5px;font-family:monospace;">${escapeHtml(s.whatsappReceiptTemplate || defaultReceiptTemplate())}</textarea>
+      <div class="btn-row">
+        <button class="btn btn-outline btn-sm" id="resetReceiptTplBtn" type="button">Reset to Default</button>
+      </div>
+      <label class="tc-label">Invoice Message</label>
+      <textarea id="waInvoiceTemplate" rows="14" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--card);color:var(--text);font-size:12.5px;font-family:monospace;">${escapeHtml(s.whatsappInvoiceTemplate || defaultInvoiceTemplate())}</textarea>
+      <div class="btn-row">
+        <button class="btn btn-outline btn-sm" id="resetInvoiceTplBtn" type="button">Reset to Default</button>
+      </div>
+      <button class="btn btn-primary" id="saveWaTemplatesBtn" style="margin-top:8px;">Save Templates</button>
+    </div>
+  `;
+}
+
+function renderSettings() {
+  switch (state.settingsPage) {
+    case 'business': return renderSettingsBusiness();
+    case 'logo': return renderSettingsLogo();
+    case 'signature': return renderSettingsSignature();
+    case 'invoicing': return renderSettingsInvoicing();
+    case 'items': return renderSettingsItems();
+    case 'applock': return renderSettingsAppLock();
+    case 'backup': return renderSettingsBackup();
+    case 'theme': return renderSettingsTheme();
+    case 'terms': return renderSettingsTerms();
+    case 'whatsapp': return renderSettingsWhatsApp();
+    default: return renderSettingsMenu();
+  }
 }
 
 /* ---------- Rental Form (Add/Edit) ---------- */
@@ -1409,6 +1623,14 @@ function bindRentalFormEvents() {
     document.getElementById('f_customerMobile').value = c.mobile || '';
     document.getElementById('f_altMobile').value = c.altMobile || '';
     document.getElementById('f_customerAddress').value = custHomeAddr(c);
+    // pull "Name for Invoice" from their most recent rental that had one set
+    const pastRentals = state.rentals.filter(r => !r.deleted && (r.customerMobile === c.mobile || r.customerName === c.name) && r.customerInvoiceName)
+      .sort((a, b) => b.createdAt - a.createdAt);
+    if (pastRentals.length) {
+      formDraft.customerInvoiceName = pastRentals[0].customerInvoiceName;
+      const invNameEl = document.getElementById('f_customerInvoiceName');
+      if (invNameEl) invNameEl.value = pastRentals[0].customerInvoiceName;
+    }
     updateBizAddrHint();
   }
   nameInput.addEventListener('input', () => {
@@ -1588,10 +1810,19 @@ function bindRentalFormEvents() {
     formDraft.items = formDraft.items.filter(i => i.name && i.name.trim() && Number(i.qty) > 0);
     if (!formDraft.items.length) { toast('Add at least one item with quantity.'); return; }
     formDraft.isDraft = false;
+    const isNew = !state.editingId;
     let assignedNow = false;
     if (formDraft.actualReturnDate && !formDraft.invoiceNumber) {
       ensureInvoiceNumber(formDraft);
       assignedNow = true;
+    }
+    if (isNew && !formDraft.stockDeducted) {
+      for (const it of formDraft.items) await adjustStock(it.name, -(Number(it.qty) || 0));
+      formDraft.stockDeducted = true;
+    }
+    if (formDraft.actualReturnDate && !formDraft.stockReturned) {
+      for (const it of formDraft.items) await adjustStock(it.name, Number(it.qty) || 0);
+      formDraft.stockReturned = true;
     }
     await dbPut('rentals', formDraft);
     const idx = state.rentals.findIndex(r => r.id === formDraft.id);
@@ -1702,65 +1933,91 @@ function kycThumbsViewHTML(kyc) {
 }
 
 /* WhatsApp message #1 — sent when items go out on rent */
+function defaultReceiptTemplate() {
+  return [
+    '🧾 {businessName}',
+    'Rental Receipt',
+    '',
+    '📅 Rental Date: {rentalDate}',
+    '👤 Customer Name: {customerName}',
+    '📞 Mobile: {mobile}',
+    '📍 Delivery Address: {deliveryAddress}',
+    '',
+    '📦 Items Issued on Rent:',
+    '{items}',
+    '',
+    '💰 Advance Paid: {advance}',
+    '',
+    'Thank you for choosing {businessName}. We appreciate your trust and look forward to serving you again.',
+    '',
+    '━━━━━━━━━━━━━━━━━━━━',
+    '👨\u200d💼 {ownerName}',
+    '📞 {phone}',
+    '📍 {address}'
+  ].join('\n');
+}
+function defaultInvoiceTemplate() {
+  return [
+    '🧾 {businessName}',
+    'Rental Invoice #{invoiceNumber}',
+    '',
+    '👤 Customer Name: {customerName}',
+    '📞 Mobile: {mobile}',
+    '📍 Delivery Address: {deliveryAddress}',
+    '',
+    '📦 Items Rented:',
+    '{items}',
+    '',
+    '📅 Rental Date: {rentalDate}',
+    '📅 Return Date: {returnDate}',
+    '📆 Rental Period: {rentalDays} Days',
+    '',
+    '💰 Total Rental Charges: {totalCharges}',
+    '💵 Advance Paid: {advance}',
+    '💳 Balance Amount: {balance}',
+    '',
+    '✅ Payment Status: {paymentStatus}',
+    '',
+    'Thank you for choosing {businessName}. We truly appreciate your business and look forward to serving you again.',
+    '',
+    '━━━━━━━━━━━━━━━━━━━━',
+    '👨\u200d💼 {ownerName}',
+    '📞 {phone}',
+    '📍 {address}'
+  ].join('\n');
+}
+function renderTemplate(tpl, values) {
+  return tpl.replace(/\{(\w+)\}/g, (m, key) => (key in values) ? values[key] : m);
+}
+
 function buildReceiptText(r) {
   const s = state.settings;
   const itemLines = r.items.map(i => `• ${i.name}: ${i.qty} Nos.`).join('\n');
-  return [
-    `🧾 ${s.businessName.toUpperCase()}`,
-    `Rental Receipt`,
-    ``,
-    `📅 Rental Date: ${fmtDate(r.date)}`,
-    `👤 Customer Name: ${r.customerInvoiceName || r.customerName}`,
-    `📞 Mobile: ${r.customerMobile || '—'}`,
-    `📍 Delivery Address: ${r.deliveryAddress || r.customerAddress || '—'}`,
-    ``,
-    `📦 Items Issued on Rent:`,
-    itemLines,
-    ``,
-    `💰 Advance Paid: ${fmtMoney(r.advanceAmount)}`,
-    ``,
-    `Thank you for choosing ${s.businessName}. We appreciate your trust and look forward to serving you again.`,
-    ``,
-    `━━━━━━━━━━━━━━━━━━━━`,
-    `👨‍💼 ${s.ownerName}`,
-    `📞 ${s.phone}`,
-    `📍 ${s.address}`
-  ].join('\n');
+  const values = {
+    businessName: s.businessName, tagline: s.tagline || '', ownerName: s.ownerName, phone: s.phone, address: s.address,
+    customerName: r.customerInvoiceName || r.customerName, mobile: r.customerMobile || '—',
+    deliveryAddress: r.deliveryAddress || r.customerAddress || '—',
+    items: itemLines, advance: fmtMoney(r.advanceAmount), invoiceNumber: r.invoiceNumber || '',
+    rentalDate: fmtDate(r.date)
+  };
+  return renderTemplate(s.whatsappReceiptTemplate || defaultReceiptTemplate(), values);
 }
 
-/* WhatsApp message #2 — final invoice with balance */
 function buildInvoiceText(r) {
   const s = state.settings;
   const itemLines = r.items.map(i => `• ${i.name}: ${i.qty} Nos.`).join('\n');
   const due = rentalDue(r);
-  return [
-    `🧾 ${s.businessName.toUpperCase()}`,
-    `Rental Invoice #${r.invoiceNumber || ''}`,
-    ``,
-    `👤 Customer Name: ${r.customerInvoiceName || r.customerName}`,
-    `📞 Mobile: ${r.customerMobile || '—'}`,
-    `📍 Delivery Address: ${r.deliveryAddress || r.customerAddress || '—'}`,
-    ``,
-    `📦 Items Rented:`,
-    itemLines,
-    ``,
-    `📅 Rental Date: ${fmtDate(r.date)}`,
-    `📅 Return Date: ${r.actualReturnDate ? fmtDate(r.actualReturnDate) : 'Ongoing'}`,
-    `📆 Rental Period: ${rentalDays(r)} Days`,
-    ``,
-    `💰 Total Rental Charges: ${fmtMoney(rentalGrandTotal(r))}`,
-    `💵 Advance Paid: ${fmtMoney(rentalPaid(r))}`,
-    `💳 Balance Amount: ${fmtMoney(due)}`,
-    ``,
-    `✅ Payment Status: ${due <= 0 ? 'Paid' : 'Pending'}`,
-    ``,
-    `Thank you for choosing ${s.businessName}. We truly appreciate your business and look forward to serving you again.`,
-    ``,
-    `━━━━━━━━━━━━━━━━━━━━`,
-    `👨‍💼 ${s.ownerName}`,
-    `📞 ${s.phone}`,
-    `📍 ${s.address}`
-  ].join('\n');
+  const values = {
+    businessName: s.businessName, tagline: s.tagline || '', ownerName: s.ownerName, phone: s.phone, address: s.address,
+    customerName: r.customerInvoiceName || r.customerName, mobile: r.customerMobile || '—',
+    deliveryAddress: r.deliveryAddress || r.customerAddress || '—',
+    items: itemLines, invoiceNumber: r.invoiceNumber || '',
+    rentalDate: fmtDate(r.date), returnDate: r.actualReturnDate ? fmtDate(r.actualReturnDate) : 'Ongoing',
+    rentalDays: String(rentalDays(r)), totalCharges: fmtMoney(rentalGrandTotal(r)),
+    advance: fmtMoney(rentalPaid(r)), balance: fmtMoney(due),
+    paymentStatus: due <= 0 ? 'Paid' : 'Pending'
+  };
+  return renderTemplate(s.whatsappInvoiceTemplate || defaultInvoiceTemplate(), values);
 }
 
 function sendWhatsApp(r, text) {
@@ -1990,6 +2247,7 @@ function showLockScreen() {
       ${[1,2,3,4,5,6,7,8,9].map(n => `<button data-pin="${n}">${n}</button>`).join('')}
       <button data-pin="clear">⌫</button><button data-pin="0">0</button><button data-pin="ok">✓</button>
     </div>
+    ${state.settings.fingerprintEnabled ? `<button class="btn btn-outline" id="fpUnlockBtn" style="margin-top:20px;width:220px;">👆 Unlock with Fingerprint</button>` : ''}
   `;
   pinBuffer = '';
   el.querySelectorAll('[data-pin]').forEach(btn => {
@@ -2001,6 +2259,17 @@ function showLockScreen() {
       updatePinDots();
     };
   });
+  const fpBtn = document.getElementById('fpUnlockBtn');
+  if (fpBtn) {
+    fpBtn.onclick = async () => {
+      fpBtn.textContent = 'Waiting for fingerprint…';
+      const ok = await verifyFingerprint();
+      if (ok) document.getElementById('lockscreen').style.display = 'none';
+      else { toast('Fingerprint not recognized.'); fpBtn.textContent = '👆 Unlock with Fingerprint'; }
+    };
+    // offer fingerprint immediately so the person doesn't have to tap first
+    setTimeout(() => fpBtn.click(), 300);
+  }
 }
 function updatePinDots() {
   document.querySelectorAll('#pinDots span').forEach((s, i) => s.classList.toggle('filled', i < pinBuffer.length));
@@ -2015,11 +2284,79 @@ function checkPin() {
   }
 }
 
+/* Fingerprint/Face unlock via the device's platform authenticator (WebAuthn).
+   Since this app has no server, a successful local biometric assertion is treated
+   as proof of unlock — there's no remote signature verification, which is fine for
+   gating access to an app already installed on your own phone. */
+async function registerFingerprint() {
+  if (!window.PublicKeyCredential || !navigator.credentials) {
+    toast('Fingerprint unlock is not supported on this browser/device.');
+    return false;
+  }
+  try {
+    const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+    if (!available) { toast('No fingerprint/face unlock found on this device.'); return false; }
+    const challenge = crypto.getRandomValues(new Uint8Array(32));
+    const userId = crypto.getRandomValues(new Uint8Array(16));
+    const cred = await navigator.credentials.create({
+      publicKey: {
+        challenge, rp: { name: state.settings.businessName || 'Roop Rental' },
+        user: { id: userId, name: 'owner', displayName: state.settings.ownerName || 'Owner' },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+        authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required' },
+        timeout: 60000
+      }
+    });
+    if (!cred) return false;
+    state.settings.fingerprintCredentialId = btoa(String.fromCharCode(...new Uint8Array(cred.rawId)));
+    return true;
+  } catch (e) {
+    toast('Could not set up fingerprint unlock.');
+    return false;
+  }
+}
+async function verifyFingerprint() {
+  if (!window.PublicKeyCredential || !navigator.credentials || !state.settings.fingerprintCredentialId) return false;
+  try {
+    const challenge = crypto.getRandomValues(new Uint8Array(32));
+    const credIdBytes = Uint8Array.from(atob(state.settings.fingerprintCredentialId), c => c.charCodeAt(0));
+    const assertion = await navigator.credentials.get({
+      publicKey: {
+        challenge, allowCredentials: [{ id: credIdBytes, type: 'public-key' }],
+        userVerification: 'required', timeout: 60000
+      }
+    });
+    return !!assertion;
+  } catch (e) {
+    return false;
+  }
+}
+
 /* ---------- Settings events (bound after render) ---------- */
-function bindSettingsEvents() {
-  const saveBtn = document.getElementById('saveSettingsBtn');
-  if (!saveBtn) return;
-  saveBtn.onclick = async () => {
+function readImageToSettings(file, key) {
+  const reader = new FileReader();
+  reader.onload = async () => {
+    state.settings[key] = reader.result;
+    await dbPut('settings', { key: 'main', value: state.settings });
+    const labels = { signatureImg: 'Signature', stampImg: 'Stamp', logoImg: 'Logo' };
+    toast((labels[key] || 'Image') + ' saved.');
+    if (key === 'logoImg') updateHeaderLogo();
+    route();
+  };
+  reader.readAsDataURL(file);
+}
+async function saveThemeConfig() {
+  await dbPut('settings', { key: 'main', value: state.settings });
+}
+
+function bindSettingsMenuEvents() {
+  document.querySelectorAll('[data-settings-page]').forEach(card => {
+    card.onclick = () => { state.settingsPage = card.dataset.settingsPage; route(); };
+  });
+}
+
+function bindSettingsBusinessEvents() {
+  document.getElementById('saveSettingsBtn').onclick = async () => {
     state.settings.businessName = document.getElementById('setBizName').value;
     state.settings.tagline = document.getElementById('setTagline').value;
     state.settings.ownerName = document.getElementById('setOwner').value;
@@ -2034,23 +2371,21 @@ function bindSettingsEvents() {
     document.getElementById('headerSub').textContent = state.settings.address + ' · ' + state.settings.ownerName;
     toast('Business details saved.');
   };
-  function readImageToSettings(file, key) {
-    const reader = new FileReader();
-    reader.onload = async () => {
-      state.settings[key] = reader.result;
-      await dbPut('settings', { key: 'main', value: state.settings });
-      const labels = { signatureImg: 'Signature', stampImg: 'Stamp', logoImg: 'Logo' };
-      toast((labels[key] || 'Image') + ' saved.');
-      if (key === 'logoImg') updateHeaderLogo();
-      route();
-    };
-    reader.readAsDataURL(file);
-  }
+}
+
+function bindSettingsLogoEvents() {
+  document.getElementById('uploadLogoBtn').onclick = () => document.getElementById('logoFile').click();
+  document.getElementById('logoFile').addEventListener('change', (e) => { if (e.target.files[0]) readImageToSettings(e.target.files[0], 'logoImg'); });
+}
+
+function bindSettingsSignatureEvents() {
   document.getElementById('uploadSigBtn').onclick = () => document.getElementById('sigFile').click();
   document.getElementById('sigFile').addEventListener('change', (e) => { if (e.target.files[0]) readImageToSettings(e.target.files[0], 'signatureImg'); });
   document.getElementById('uploadStampBtn').onclick = () => document.getElementById('stampFile').click();
   document.getElementById('stampFile').addEventListener('change', (e) => { if (e.target.files[0]) readImageToSettings(e.target.files[0], 'stampImg'); });
+}
 
+function bindSettingsInvoicingEvents() {
   document.getElementById('saveInvoiceNumBtn').onclick = async () => {
     state.settings.invoicePrefix = document.getElementById('setInvoicePrefix').value.trim() || 'RR';
     state.settings.invoiceCounter = Math.max(1, Number(document.getElementById('setInvoiceCounter').value) || 1);
@@ -2058,8 +2393,9 @@ function bindSettingsEvents() {
     toast('Invoice numbering updated.');
     route();
   };
+}
 
-  // Manage Items (rental catalog)
+function bindSettingsItemsEvents() {
   let catalogDraft = JSON.parse(JSON.stringify(getItemCatalog()));
   function rerenderCatalogList() {
     document.getElementById('itemCatalogList').innerHTML = itemCatalogRowsHTML(catalogDraft);
@@ -2072,13 +2408,28 @@ function bindSettingsEvents() {
     document.querySelectorAll('.cat-rate').forEach(inp => {
       inp.addEventListener('input', () => { catalogDraft[Number(inp.dataset.idx)].rate = Number(inp.value) || 0; });
     });
+    document.querySelectorAll('.cat-stock').forEach(inp => {
+      inp.addEventListener('input', () => { catalogDraft[Number(inp.dataset.idx)].stock = Number(inp.value) || 0; });
+    });
     document.querySelectorAll('.cat-del').forEach(btn => {
       btn.onclick = () => { catalogDraft.splice(Number(btn.dataset.idx), 1); rerenderCatalogList(); };
+    });
+    document.querySelectorAll('.cat-up').forEach(btn => {
+      btn.onclick = () => {
+        const idx = Number(btn.dataset.idx);
+        if (idx > 0) { [catalogDraft[idx - 1], catalogDraft[idx]] = [catalogDraft[idx], catalogDraft[idx - 1]]; rerenderCatalogList(); }
+      };
+    });
+    document.querySelectorAll('.cat-down').forEach(btn => {
+      btn.onclick = () => {
+        const idx = Number(btn.dataset.idx);
+        if (idx < catalogDraft.length - 1) { [catalogDraft[idx + 1], catalogDraft[idx]] = [catalogDraft[idx], catalogDraft[idx + 1]]; rerenderCatalogList(); }
+      };
     });
   }
   bindCatalogRows();
   document.getElementById('addCatalogItemBtn').onclick = () => {
-    catalogDraft.push({ name: '', rate: 0 });
+    catalogDraft.push({ name: '', rate: 0, stock: 0 });
     rerenderCatalogList();
   };
   document.getElementById('saveCatalogBtn').onclick = async () => {
@@ -2089,7 +2440,9 @@ function bindSettingsEvents() {
     toast('Item catalog saved.');
     route();
   };
+}
 
+function bindSettingsAppLockEvents() {
   document.getElementById('pinToggle').onchange = (e) => {
     state.settings.pinEnabled = e.target.checked;
     document.getElementById('pinSetupWrap').style.display = e.target.checked ? '' : 'none';
@@ -2102,16 +2455,30 @@ function bindSettingsEvents() {
     await dbPut('settings', { key: 'main', value: state.settings });
     toast('PIN saved.');
   };
+  const fpToggle = document.getElementById('fingerprintToggle');
+  fpToggle.onchange = async (e) => {
+    if (e.target.checked) {
+      const ok = await registerFingerprint();
+      if (!ok) { e.target.checked = false; return; }
+      state.settings.fingerprintEnabled = true;
+      toast('Fingerprint unlock enabled.');
+    } else {
+      state.settings.fingerprintEnabled = false;
+      state.settings.fingerprintCredentialId = '';
+    }
+    await dbPut('settings', { key: 'main', value: state.settings });
+  };
+}
+
+function bindSettingsBackupEvents() {
   document.getElementById('exportBtn').onclick = exportBackup;
   document.getElementById('importBtn').onclick = () => document.getElementById('importFile').click();
   document.getElementById('importFile').addEventListener('change', (e) => {
     if (e.target.files[0]) importBackup(e.target.files[0]);
   });
-  async function saveThemeConfig() {
-    await dbPut('settings', { key: 'main', value: state.settings });
-  }
+}
 
-  // generic chip-based theme controls: mode, font size/family/weight, card elevation/padding, button shape/fill/size, dashboard density, animation speed
+function bindSettingsThemeEvents() {
   document.querySelectorAll('[data-tc]').forEach(chip => {
     chip.onclick = async () => {
       const key = chip.dataset.tc;
@@ -2123,7 +2490,6 @@ function bindSettingsEvents() {
     };
   });
 
-  // accent presets
   document.querySelectorAll('[data-accent-preset]').forEach(sw => {
     sw.onclick = async () => {
       state.settings.themeConfig.accentPreset = sw.dataset.accentPreset;
@@ -2142,7 +2508,20 @@ function bindSettingsEvents() {
   });
   if (accentCustomPicker) accentCustomPicker.addEventListener('change', () => route());
 
-  // background pickers
+  const applyAccentCodeBtn = document.getElementById('applyAccentCodeBtn');
+  if (applyAccentCodeBtn) applyAccentCodeBtn.onclick = async () => {
+    const raw = document.getElementById('accentCodeInput').value;
+    const hex = parseColorToHex(raw);
+    const errEl = document.getElementById('accentCodeError');
+    if (!hex) { errEl.style.display = 'block'; return; }
+    errEl.style.display = 'none';
+    state.settings.themeConfig.accentPreset = 'custom';
+    state.settings.themeConfig.accentColor = hex;
+    applyThemeConfig();
+    await saveThemeConfig();
+    route();
+  };
+
   const screenBgPicker = document.getElementById('screenBgPicker');
   const cardBgPicker = document.getElementById('cardBgPicker');
   if (screenBgPicker) screenBgPicker.addEventListener('input', async (e) => { state.settings.themeConfig.screenBg = e.target.value; applyThemeConfig(); await saveThemeConfig(); });
@@ -2153,7 +2532,6 @@ function bindSettingsEvents() {
     applyThemeConfig(); await saveThemeConfig(); route();
   };
 
-  // card radius slider
   const radiusSlider = document.getElementById('cardRadiusSlider');
   if (radiusSlider) radiusSlider.addEventListener('input', async (e) => {
     state.settings.themeConfig.cardRadius = Number(e.target.value);
@@ -2162,7 +2540,6 @@ function bindSettingsEvents() {
     await saveThemeConfig();
   });
 
-  // card border toggle
   const cardBorderToggle = document.getElementById('cardBorderToggle');
   if (cardBorderToggle) cardBorderToggle.onchange = async (e) => {
     state.settings.themeConfig.cardBorder = e.target.checked;
@@ -2170,7 +2547,6 @@ function bindSettingsEvents() {
     await saveThemeConfig();
   };
 
-  // animations enabled toggle
   const animEnabledToggle = document.getElementById('animEnabledToggle');
   if (animEnabledToggle) animEnabledToggle.onchange = async (e) => {
     state.settings.themeConfig.animationsEnabled = e.target.checked;
@@ -2178,7 +2554,6 @@ function bindSettingsEvents() {
     await saveThemeConfig();
   };
 
-  // reset / export / import theme
   const resetThemeBtn = document.getElementById('resetThemeBtn');
   if (resetThemeBtn) resetThemeBtn.onclick = async () => {
     if (!confirm('Reset all theme customization to default?')) return;
@@ -2216,9 +2591,63 @@ function bindSettingsEvents() {
     };
     reader.readAsText(file);
   });
+}
 
-  document.getElementById('uploadLogoBtn').onclick = () => document.getElementById('logoFile').click();
-  document.getElementById('logoFile').addEventListener('change', (e) => { if (e.target.files[0]) readImageToSettings(e.target.files[0], 'logoImg'); });
+function bindSettingsTermsEvents() {
+  let termsDraft = [...(state.settings.invoiceTerms || [])];
+  function rerenderTerms() {
+    document.getElementById('termsList').innerHTML = termsRowsHTML(termsDraft);
+    bindTermRows();
+  }
+  function bindTermRows() {
+    document.querySelectorAll('.term-text').forEach(ta => {
+      ta.addEventListener('input', () => { termsDraft[Number(ta.dataset.idx)] = ta.value; });
+    });
+    document.querySelectorAll('.term-del').forEach(btn => {
+      btn.onclick = () => { termsDraft.splice(Number(btn.dataset.idx), 1); rerenderTerms(); };
+    });
+  }
+  bindTermRows();
+  document.getElementById('addTermBtn').onclick = () => { termsDraft.push(''); rerenderTerms(); };
+  document.getElementById('saveTermsBtn').onclick = async () => {
+    state.settings.invoiceTerms = termsDraft.filter(t => t && t.trim());
+    await dbPut('settings', { key: 'main', value: state.settings });
+    toast('Terms & Conditions saved.');
+    route();
+  };
+}
+
+function bindSettingsWhatsAppEvents() {
+  document.getElementById('resetReceiptTplBtn').onclick = () => {
+    document.getElementById('waReceiptTemplate').value = defaultReceiptTemplate();
+  };
+  document.getElementById('resetInvoiceTplBtn').onclick = () => {
+    document.getElementById('waInvoiceTemplate').value = defaultInvoiceTemplate();
+  };
+  document.getElementById('saveWaTemplatesBtn').onclick = async () => {
+    state.settings.whatsappReceiptTemplate = document.getElementById('waReceiptTemplate').value;
+    state.settings.whatsappInvoiceTemplate = document.getElementById('waInvoiceTemplate').value;
+    await dbPut('settings', { key: 'main', value: state.settings });
+    toast('WhatsApp templates saved.');
+  };
+}
+
+function bindSettingsEvents() {
+  const backBtn = document.getElementById('settingsBackBtn');
+  if (backBtn) backBtn.onclick = () => { state.settingsPage = null; route(); };
+  switch (state.settingsPage) {
+    case 'business': bindSettingsBusinessEvents(); break;
+    case 'logo': bindSettingsLogoEvents(); break;
+    case 'signature': bindSettingsSignatureEvents(); break;
+    case 'invoicing': bindSettingsInvoicingEvents(); break;
+    case 'items': bindSettingsItemsEvents(); break;
+    case 'applock': bindSettingsAppLockEvents(); break;
+    case 'backup': bindSettingsBackupEvents(); break;
+    case 'theme': bindSettingsThemeEvents(); break;
+    case 'terms': bindSettingsTermsEvents(); break;
+    case 'whatsapp': bindSettingsWhatsAppEvents(); break;
+    default: bindSettingsMenuEvents(); break;
+  }
 }
 
 function updateHeaderLogo() {
@@ -2248,6 +2677,7 @@ function route() {
   }
   main.innerHTML = html;
   bindMainEvents();
+  if (state.view === 'dashboard' && detailStack.view !== 'customerDetail') bindStockRows();
   if (state.view === 'settings' && detailStack.view !== 'customerDetail') bindSettingsEvents();
   if (detailStack.view === 'customerDetail') {
     const editBtn = document.getElementById('editCustomerBtn');
@@ -2320,11 +2750,12 @@ async function init() {
       detailStack = { view: null, id: null };
       state.view = btn.dataset.view;
       state.filter = 'active';
+      state.settingsPage = null;
       route();
     });
   });
   document.getElementById('themeToggle').addEventListener('click', () => {
-    const order = ['light', 'dark', 'system'];
+    const order = ['light', 'dark', 'gray', 'system'];
     const idx = order.indexOf(state.settings.themeConfig.mode);
     state.settings.themeConfig.mode = order[(idx + 1) % order.length];
     applyThemeConfig();
