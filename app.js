@@ -478,7 +478,13 @@ function renderDashboard() {
       <div class="stat-card"><div class="num">${fmtMoney(s.monthlyRevenue)}</div><div class="lbl">This Month Revenue</div></div>
     </div>
     <div class="section-title">📦 Stock <span style="font-weight:400;color:var(--text-soft);font-size:11.5px;">(auto-updates as items go out/return)</span></div>
-    ${catalog.length ? `<div class="card"><div id="stockList">${stockRowsHTML(catalog)}</div></div>` : '<div class="empty">No items in your catalog yet — add some in Settings → Manage Items.</div>'}
+    ${catalog.length ? `<div class="card">
+      <div class="stock-row stock-heading">
+        <div class="stock-name">Item</div>
+        <div class="stock-qty-heading">Stock Qty</div>
+      </div>
+      <div id="stockList">${stockRowsHTML(catalog)}</div>
+    </div>` : '<div class="empty">No items in your catalog yet — add some in Settings → Manage Items.</div>'}
   `;
 }
 
@@ -657,7 +663,10 @@ function renderCustomerDetail(id) {
         💼 Total Business: <b>${fmtMoney(totalBiz)}</b><br>
         ${totalDue > 0 ? `⚠️ Outstanding: <b style="color:var(--red)">${fmtMoney(totalDue)}</b>` : `✅ No outstanding dues`}
       </div>
-      <button class="btn btn-outline btn-sm" id="editCustomerBtn" style="margin-top:10px;">✏️ Edit Customer Details</button>
+      <div class="btn-row" style="margin-top:10px;">
+        <button class="btn btn-outline btn-sm" id="editCustomerBtn">✏️ Edit Customer Details</button>
+        <button class="btn btn-danger btn-sm" id="deleteCustomerBtn">🗑 Delete Customer</button>
+      </div>
     </div>
 
     ${(c.aadharPhotos || []).length ? `<div class="section-title">Aadhar Card</div><div class="kyc-grid">${kycThumbsViewHTML(c.aadharPhotos)}</div>` : ''}
@@ -789,7 +798,10 @@ function bindCustomerFormEvents(existingId) {
     document.getElementById('custPhotoCameraBtn').onclick = () => document.getElementById('custPhotoCameraInput').click();
     document.getElementById('custPhotoGalleryBtn').onclick = () => document.getElementById('custPhotoGalleryInput').click();
     const removeBtn = document.getElementById('custPhotoRemoveBtn');
-    if (removeBtn) removeBtn.onclick = () => { customerFormDraft.photo = ''; refreshPhotoPreview(); rerenderCustPhotoButtons(); };
+    if (removeBtn) removeBtn.onclick = () => {
+      if (!confirm('Remove this photo?')) return;
+      customerFormDraft.photo = ''; refreshPhotoPreview(); rerenderCustPhotoButtons();
+    };
   }
   document.getElementById('custPhotoCameraInput').addEventListener('change', (e) => { if (e.target.files[0]) handlePhotoFile(e.target.files[0]); });
   document.getElementById('custPhotoGalleryInput').addEventListener('change', (e) => { if (e.target.files[0]) handlePhotoFile(e.target.files[0]); });
@@ -815,6 +827,7 @@ function bindCustomerFormEvents(existingId) {
       document.querySelectorAll(`#${gridId} [data-kyc-del]`).forEach(btn => {
         btn.onclick = (ev) => {
           ev.stopPropagation();
+          if (!confirm('Delete this photo?')) return;
           customerFormDraft[arrKey].splice(Number(btn.dataset.kycDel), 1);
           document.getElementById(gridId).innerHTML = kycThumbsHTML(customerFormDraft[arrKey]);
           bindDeletes();
@@ -1385,7 +1398,15 @@ function rentalFormHTML() {
   <div style="font-size:12px;color:var(--text-soft);margin:-6px 0 12px;">Rental Days (auto-calculated): <b id="rentalDaysDisplay">${rentalDays(r)}</b>${r.actualReturnDate ? '' : ' (still ongoing — counted till today)'}</div>
 
   <div class="section-title">Items — just enter quantity</div>
-  <div class="card" id="stdItemsWrap">${standardItemsHTML(r.items)}</div>
+  <div class="card" id="stdItemsWrap">
+    <div class="std-item-row std-item-heading">
+      <div class="std-item-label">Item</div>
+      <div class="std-heading-rate">Rate</div>
+      <span class="std-x"></span>
+      <div class="std-heading-qty">Qty</div>
+    </div>
+    ${standardItemsHTML(r.items)}
+  </div>
 
   <div class="section-title">Other / Custom Items <a id="addItemBtn" style="cursor:pointer;">+ Add Item</a></div>
   <div id="itemsWrap">${customItemsHTML(r.items)}</div>
@@ -1700,7 +1721,7 @@ function bindRentalFormEvents() {
       formDraft.items.splice(idx, 1);
     }
   }
-  document.querySelectorAll('#stdItemsWrap .std-item-row').forEach(row => {
+  document.querySelectorAll('#stdItemsWrap .std-item-row:not(.std-item-heading)').forEach(row => {
     const name = row.dataset.stdName;
     const qtyInput = row.querySelector('.std-qty');
     const rateInput = row.querySelector('.std-rate');
@@ -1741,6 +1762,7 @@ function bindRentalFormEvents() {
     row.querySelector('.it-rate').addEventListener('input', (e) => { formDraft.items.find(it => it.id === id).rentPerDay = Number(e.target.value); refreshFormTotals(); updateLineTotal(id); });
     const delBtn = row.querySelector('[data-del-item]');
     if (delBtn) delBtn.addEventListener('click', () => {
+      if (!confirm('Remove this item from the rental?')) return;
       formDraft.items = formDraft.items.filter(it => it.id !== id);
       rerenderCustomItems();
     });
@@ -1796,6 +1818,7 @@ function bindRentalFormEvents() {
     document.querySelectorAll('[data-kyc-del]').forEach(btn => {
       btn.onclick = (ev) => {
         ev.stopPropagation();
+        if (!confirm('Delete this photo?')) return;
         formDraft.kyc.splice(Number(btn.dataset.kycDel), 1);
         document.getElementById('kycGrid').innerHTML = kycThumbsHTML(formDraft.kyc);
         bindKycEvents();
@@ -1888,9 +1911,10 @@ function rentalDetailHTML(r) {
   ${(r.payments || []).length ? `
   <div class="section-title">Payment History</div>
   <div class="card">
-    ${r.payments.map(p => `
-      <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:12.5px;">
-        <span>${fmtDate(p.date)} · ${escapeHtml(p.mode)}</span><b>${fmtMoney(p.amount)}</b>
+    ${r.payments.map((p, pIdx) => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);font-size:12.5px;">
+        <span>${fmtDate(p.date)} · ${escapeHtml(p.mode)}</span>
+        <span style="display:flex;align-items:center;gap:8px;"><b>${fmtMoney(p.amount)}</b><button type="button" class="pay-del" data-idx="${pIdx}" style="background:none;border:none;color:var(--red);font-size:14px;padding:2px 4px;">✕</button></span>
       </div>`).join('')}
   </div>` : ''}
 
@@ -2087,10 +2111,22 @@ function bindRentalDetailEvents(r) {
     toast('Payment recorded.');
     openRentalDetail(r.id);
   };
+  document.querySelectorAll('.pay-del').forEach(btn => {
+    btn.onclick = async () => {
+      if (!confirm('Delete this payment record?')) return;
+      r.payments.splice(Number(btn.dataset.idx), 1);
+      await dbPut('rentals', r);
+      toast('Payment deleted.');
+      openRentalDetail(r.id);
+    };
+  });
   const archiveBtn = document.getElementById('archiveBtn');
   if (archiveBtn) archiveBtn.onclick = async () => { r.archived = !r.archived; await dbPut('rentals', r); toast(r.archived ? 'Archived.' : 'Unarchived.'); closeModal(); route(); };
   const deleteBtn = document.getElementById('deleteBtn');
-  if (deleteBtn) deleteBtn.onclick = async () => { r.deleted = true; r.deletedAt = Date.now(); await dbPut('rentals', r); toast('Moved to Trash.'); closeModal(); route(); };
+  if (deleteBtn) deleteBtn.onclick = async () => {
+    if (!confirm('Move this rental to Trash?')) return;
+    r.deleted = true; r.deletedAt = Date.now(); await dbPut('rentals', r); toast('Moved to Trash.'); closeModal(); route();
+  };
   const restoreBtn = document.getElementById('restoreBtn');
   if (restoreBtn) restoreBtn.onclick = async () => { r.deleted = false; delete r.deletedAt; await dbPut('rentals', r); toast('Restored.'); closeModal(); route(); };
   const permDelBtn = document.getElementById('permDelBtn');
@@ -2166,7 +2202,6 @@ function openInvoicePrint(r) {
         <div class="meta-grid">
           <div><span>Customer</span>${escapeHtml(r.customerInvoiceName || r.customerName)}</div>
           <div><span>Mobile</span>${escapeHtml(r.customerMobile || '—')}</div>
-          <div><span>Address</span>${escapeHtml(r.customerAddress || '—')}</div>
           <div><span>Delivery Address</span>${escapeHtml(r.deliveryAddress || '—')}</div>
           ${r.vehicleNumber ? `<div><span>Vehicle Number</span>${escapeHtml(r.vehicleNumber)}</div>` : ''}
           <div><span>Invoice Date</span>${fmtDate(r.invoiceDate || r.date)}</div>
@@ -2412,7 +2447,10 @@ function bindSettingsItemsEvents() {
       inp.addEventListener('input', () => { catalogDraft[Number(inp.dataset.idx)].stock = Number(inp.value) || 0; });
     });
     document.querySelectorAll('.cat-del').forEach(btn => {
-      btn.onclick = () => { catalogDraft.splice(Number(btn.dataset.idx), 1); rerenderCatalogList(); };
+      btn.onclick = () => {
+        if (!confirm('Delete this item from your catalog?')) return;
+        catalogDraft.splice(Number(btn.dataset.idx), 1); rerenderCatalogList();
+      };
     });
     document.querySelectorAll('.cat-up').forEach(btn => {
       btn.onclick = () => {
@@ -2528,6 +2566,7 @@ function bindSettingsThemeEvents() {
   if (cardBgPicker) cardBgPicker.addEventListener('input', async (e) => { state.settings.themeConfig.cardBg = e.target.value; applyThemeConfig(); await saveThemeConfig(); });
   const clearBgBtn = document.getElementById('clearBgBtn');
   if (clearBgBtn) clearBgBtn.onclick = async () => {
+    if (!confirm('Reset background colors to default?')) return;
     state.settings.themeConfig.screenBg = ''; state.settings.themeConfig.cardBg = '';
     applyThemeConfig(); await saveThemeConfig(); route();
   };
@@ -2604,7 +2643,10 @@ function bindSettingsTermsEvents() {
       ta.addEventListener('input', () => { termsDraft[Number(ta.dataset.idx)] = ta.value; });
     });
     document.querySelectorAll('.term-del').forEach(btn => {
-      btn.onclick = () => { termsDraft.splice(Number(btn.dataset.idx), 1); rerenderTerms(); };
+      btn.onclick = () => {
+        if (!confirm('Remove this clause?')) return;
+        termsDraft.splice(Number(btn.dataset.idx), 1); rerenderTerms();
+      };
     });
   }
   bindTermRows();
@@ -2682,6 +2724,16 @@ function route() {
   if (detailStack.view === 'customerDetail') {
     const editBtn = document.getElementById('editCustomerBtn');
     if (editBtn) editBtn.onclick = () => openCustomerForm(detailStack.id);
+    const delCustBtn = document.getElementById('deleteCustomerBtn');
+    if (delCustBtn) delCustBtn.onclick = async () => {
+      if (!confirm('Delete this customer\'s profile? Their past rentals and invoices will NOT be deleted, only their saved profile (contact info, photos).')) return;
+      await dbDelete('customers', detailStack.id);
+      state.customers = state.customers.filter(c => c.id !== detailStack.id);
+      toast('Customer deleted.');
+      detailStack = { view: null, id: null };
+      state.view = 'customers';
+      route();
+    };
   }
   document.querySelectorAll('nav.bottomnav button').forEach(b => b.classList.toggle('active', b.dataset.view === state.view));
 }
