@@ -113,11 +113,13 @@
   .field-row{display:flex;gap:10px;}
   .field-row .field{flex:1;}
   .autofill-list{position:absolute;top:100%;left:0;right:0;background:var(--card);border:1px solid var(--border);
-    border-radius:11px;max-height:180px;overflow:auto;z-index:30;box-shadow:0 8px 20px rgba(0,0,0,.12);margin-top:4px;}
-  .autofill-list div{padding:9px 12px;font-size:13px;border-bottom:1px solid var(--border);}
-  .autofill-list div:last-child{border-bottom:none;}
-  .autofill-list div b{display:block;}
-  .autofill-list div span{font-size:11px;color:var(--text-soft);}
+    border-radius:11px;max-height:220px;overflow:auto;z-index:30;box-shadow:0 8px 20px rgba(0,0,0,.12);margin-top:4px;}
+  .autofill-row{display:flex;align-items:center;gap:8px;padding:9px 12px;font-size:13px;border-bottom:1px solid var(--border);cursor:pointer;}
+  .autofill-row:last-child{border-bottom:none;}
+  .autofill-row .af-info{flex:1;min-width:0;}
+  .autofill-row .af-info b{display:block;}
+  .autofill-row .af-info span{font-size:11px;color:var(--text-soft);}
+  .autofill-row .af-remove{background:none;border:none;color:var(--red);font-size:15px;padding:4px 6px;flex-shrink:0;}
 
   .item-row{border:1px solid var(--border);border-radius:12px;padding:10px;margin-bottom:8px;position:relative;background:var(--bg);}
 

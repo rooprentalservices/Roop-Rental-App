@@ -216,7 +216,8 @@ const state = {
     fingerprintEnabled: false,
     fingerprintCredentialId: '',
     whatsappReceiptTemplate: '',
-    whatsappInvoiceTemplate: ''
+    whatsappInvoiceTemplate: '',
+    transporterHistory: []
   },
   searchQuery: '',
   filter: 'active',
@@ -250,8 +251,8 @@ const ANIM_SPEED_MAP = { slow: '.32s', normal: '.15s', fast: '.06s' };
 function defaultThemeConfig() {
   return {
     mode: 'light', // 'light' | 'dark' | 'gray' | 'system'
-    accentPreset: 'orange',
-    accentColor: ACCENT_PRESETS.orange,
+    accentPreset: 'blue',
+    accentColor: ACCENT_PRESETS.blue,
     screenBg: '', cardBg: '',
     fontSize: 'medium', fontFamily: 'system', fontWeight: 'normal',
     cardRadius: 16, cardElevation: 'low', cardBorder: true, cardPadding: 'normal',
@@ -455,16 +456,28 @@ async function bumpFrequentItem(name) {
   else await dbPut('items', { name, count: 1 });
 }
 
+async function upsertTransporterHistory(name, mobile) {
+  if (!name || !name.trim()) return;
+  state.settings.transporterHistory = state.settings.transporterHistory || [];
+  const existing = state.settings.transporterHistory.find(t => t.name.toLowerCase() === name.trim().toLowerCase());
+  if (existing) { if (mobile) existing.mobile = mobile; }
+  else state.settings.transporterHistory.push({ name: name.trim(), mobile: mobile || '' });
+  await dbPut('settings', { key: 'main', value: state.settings });
+}
+
 /* ---------- Rendering: Dashboard ---------- */
 function computeStats() {
   const active = state.rentals.filter(r => !r.deleted && !r.archived);
   const today = todayISO();
   const totalActive = active.filter(r => itemReturnState(r) !== 'returned').length;
   const todayRentals = active.filter(r => r.date === today).length;
-  const pendingPayments = active.filter(r => rentalDue(r) > 0).length;
+  const invoiced = state.rentals.filter(r => !r.deleted && r.invoiceNumber);
+  const pendingDueRentals = invoiced.filter(r => rentalDue(r) > 0);
+  const pendingDueTotal = pendingDueRentals.reduce((s, r) => s + rentalDue(r), 0);
+  const pendingDueCount = pendingDueRentals.length;
   const monthStart = today.slice(0, 7);
   const monthlyRevenue = active.filter(r => (r.date || '').startsWith(monthStart)).reduce((s, r) => s + rentalPaid(r), 0);
-  return { totalActive, todayRentals, pendingPayments, monthlyRevenue };
+  return { totalActive, todayRentals, pendingDueTotal, pendingDueCount, monthlyRevenue };
 }
 
 function renderDashboard() {
@@ -474,7 +487,7 @@ function renderDashboard() {
     <div class="stat-grid">
       <div class="stat-card accent"><div class="num">${s.totalActive}</div><div class="lbl">Active Rentals</div></div>
       <div class="stat-card"><div class="num">${s.todayRentals}</div><div class="lbl">Today's Rentals</div></div>
-      <div class="stat-card"><div class="num" style="color:var(--brown)">${s.pendingPayments}</div><div class="lbl">Pending Payments</div></div>
+      <div class="stat-card"><div class="num" style="color:var(--brown)">${fmtMoney(s.pendingDueTotal)}</div><div class="lbl">Pending Payments (${s.pendingDueCount})</div></div>
       <div class="stat-card"><div class="num">${fmtMoney(s.monthlyRevenue)}</div><div class="lbl">This Month Revenue</div></div>
     </div>
     <div class="section-title">📦 Stock <span style="font-weight:400;color:var(--text-soft);font-size:11.5px;">(auto-updates as items go out/return)</span></div>
@@ -1353,7 +1366,7 @@ function rentalFormHTML() {
   </div>
   <div class="field"><label>Name for Invoice <span style="font-weight:400;color:var(--text-soft);">(if different)</span></label><input id="f_customerInvoiceName" value="${escapeHtml(r.customerInvoiceName || '')}" placeholder="Leave blank to use Customer Name above"></div>
   <div class="field-row">
-    <div class="field"><label>Mobile</label><input id="f_customerMobile" value="${escapeHtml(r.customerMobile)}" inputmode="tel"></div>
+    <div class="field" style="position:relative;"><label>Mobile</label><input id="f_customerMobile" value="${escapeHtml(r.customerMobile)}" inputmode="tel"><div id="mobileAutofill"></div></div>
     <div class="field"><label>Alt. Mobile</label><input id="f_altMobile" value="${escapeHtml(r.altMobile)}" inputmode="tel"></div>
   </div>
   <div class="btn-row" style="margin-top:-4px;margin-bottom:12px;">
@@ -1366,7 +1379,7 @@ function rentalFormHTML() {
   <div class="section-title">Transport</div>
   <div class="field"><label>Mode of Transport</label><input id="f_transportMode" value="${escapeHtml(r.transportMode)}" placeholder="e.g. Tempo, Auto, Own Vehicle"></div>
   <div class="field-row">
-    <div class="field"><label>Transporter Name</label><input id="f_transporterName" value="${escapeHtml(r.transporterName)}"></div>
+    <div class="field" style="position:relative;"><label>Transporter Name</label><input id="f_transporterName" value="${escapeHtml(r.transporterName)}" autocomplete="off"><div id="transporterAutofill"></div></div>
     <div class="field"><label>Transporter Mobile</label><input id="f_transporterMobile" value="${escapeHtml(r.transporterMobile)}" inputmode="tel"></div>
   </div>
   <div class="field"><label>Vehicle Number</label><input id="f_vehicleNumber" value="${escapeHtml(r.vehicleNumber || '')}" placeholder="e.g. GJ01AB1234"></div>
@@ -1587,6 +1600,12 @@ function bindRentalFormEvents() {
   document.getElementById('closeForm').onclick = closeModal;
   document.getElementById('cancelFormBtn').onclick = closeModal;
 
+  // select existing value on focus so typing replaces a default "0" instead of appending to it
+  // (delegated with capture since 'focus' doesn't bubble — also covers rows added later, e.g. custom items)
+  sheet.addEventListener('focus', (e) => {
+    if (e.target && e.target.tagName === 'INPUT' && e.target.type === 'number') e.target.select();
+  }, true);
+
   const simpleFields = {
     f_customerName: 'customerName', f_customerInvoiceName: 'customerInvoiceName',
     f_customerMobile: 'customerMobile', f_altMobile: 'altMobile',
@@ -1637,6 +1656,38 @@ function bindRentalFormEvents() {
       hint.innerHTML = '';
     }
   }
+  function customerSuggestionRowsHTML(matches) {
+    if (!matches.length) return '';
+    return `<div class="autofill-list">${matches.map(c => `
+      <div class="autofill-row" data-pick-cust="${c.id}">
+        <div class="af-info"><b>${escapeHtml(c.name)}</b><span>${escapeHtml(c.mobile || '')}${custHomeAddr(c) ? ' · ' + escapeHtml(custHomeAddr(c)) : ''}</span></div>
+        <button type="button" class="af-remove" data-remove-cust="${c.id}" title="Remove this suggestion">✕</button>
+      </div>`).join('')}</div>`;
+  }
+  function bindSuggestionBox(box, matches, onPick) {
+    box.querySelectorAll('[data-pick-cust]').forEach(el => {
+      el.addEventListener('click', (e) => {
+        if (e.target.closest('[data-remove-cust]')) return;
+        const c = matches.find(x => x.id === el.dataset.pickCust);
+        onPick(c);
+        box.innerHTML = '';
+      });
+    });
+    box.querySelectorAll('[data-remove-cust]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!confirm('Remove this saved customer? This deletes their profile (name, mobile, address) — it will not affect any past rentals or invoices.')) return;
+        const id = btn.dataset.removeCust;
+        await dbDelete('customers', id);
+        state.customers = state.customers.filter(c => c.id !== id);
+        // re-render whatever is left, using the same filter that produced this list
+        const remaining = matches.filter(c => c.id !== id);
+        if (remaining.length) { box.innerHTML = customerSuggestionRowsHTML(remaining); bindSuggestionBox(box, remaining, onPick); }
+        else box.innerHTML = '';
+        toast('Customer removed.');
+      });
+    });
+  }
   function applyCustomerMatch(c) {
     formDraft.customerName = c.name; formDraft.customerMobile = c.mobile || ''; formDraft.altMobile = c.altMobile || ''; formDraft.customerAddress = custHomeAddr(c);
     formDraft._matchedBusinessAddress = c.businessAddress || '';
@@ -1660,27 +1711,70 @@ function bindRentalFormEvents() {
     if (!q) { box.innerHTML = ''; return; }
     const matches = state.customers.filter(c => c.name.toLowerCase().includes(q)).slice(0, 5);
     if (!matches.length) { box.innerHTML = ''; return; }
-    box.innerHTML = `<div class="autofill-list">${matches.map(c => `<div data-pick-cust="${c.id}"><b>${escapeHtml(c.name)}</b><span>${escapeHtml(c.mobile || '')} ${escapeHtml(custHomeAddr(c))}</span></div>`).join('')}</div>`;
-    box.querySelectorAll('[data-pick-cust]').forEach(el => {
-      el.addEventListener('click', () => {
-        const c = state.customers.find(x => x.id === el.dataset.pickCust);
-        applyCustomerMatch(c);
-        box.innerHTML = '';
-      });
-    });
+    box.innerHTML = customerSuggestionRowsHTML(matches);
+    bindSuggestionBox(box, matches, applyCustomerMatch);
   });
 
-  // autofill by mobile number when typed manually
+  // suggestions by mobile number when typed manually (also removable, same as name suggestions)
   const mobileInput = document.getElementById('f_customerMobile');
   mobileInput.addEventListener('input', () => {
     const digits = mobileInput.value.replace(/\D/g, '');
-    if (digits.length < 10) return;
-    const last10 = digits.slice(-10);
-    const match = state.customers.find(c => (c.mobile || '').replace(/\D/g, '').slice(-10) === last10);
-    if (match && !nameInput.value.trim()) {
-      applyCustomerMatch(match);
+    const box = document.getElementById('mobileAutofill');
+    if (!box) return;
+    if (digits.length < 4) { box.innerHTML = ''; return; }
+    const matches = state.customers.filter(c => (c.mobile || '').replace(/\D/g, '').includes(digits)).slice(0, 5);
+    if (!matches.length) { box.innerHTML = ''; return; }
+    const digits10 = digits.slice(-10);
+    const exact = matches.find(c => (c.mobile || '').replace(/\D/g, '').slice(-10) === digits10);
+    if (exact && digits.length >= 10 && !nameInput.value.trim()) {
+      applyCustomerMatch(exact);
+      box.innerHTML = '';
       toast('Auto-filled from saved customer.');
+      return;
     }
+    box.innerHTML = customerSuggestionRowsHTML(matches);
+    bindSuggestionBox(box, matches, (c) => { applyCustomerMatch(c); });
+  });
+
+  // transporter name suggestions (from previously used transporters), also removable
+  const transporterInput = document.getElementById('f_transporterName');
+  function transporterRowsHTML(matches) {
+    if (!matches.length) return '';
+    return `<div class="autofill-list">${matches.map((t, i) => `
+      <div class="autofill-row" data-pick-transporter="${i}">
+        <div class="af-info"><b>${escapeHtml(t.name)}</b>${t.mobile ? `<span>${escapeHtml(t.mobile)}</span>` : ''}</div>
+        <button type="button" class="af-remove" data-remove-transporter="${i}" title="Remove this suggestion">✕</button>
+      </div>`).join('')}</div>`;
+  }
+  transporterInput.addEventListener('input', () => {
+    const q = transporterInput.value.trim().toLowerCase();
+    const box = document.getElementById('transporterAutofill');
+    const history = state.settings.transporterHistory || [];
+    if (!q) { box.innerHTML = ''; return; }
+    const matches = history.filter(t => t.name.toLowerCase().includes(q)).slice(0, 5);
+    if (!matches.length) { box.innerHTML = ''; return; }
+    box.innerHTML = transporterRowsHTML(matches);
+    box.querySelectorAll('[data-pick-transporter]').forEach(el => {
+      el.addEventListener('click', (e) => {
+        if (e.target.closest('[data-remove-transporter]')) return;
+        const t = matches[Number(el.dataset.pickTransporter)];
+        formDraft.transporterName = t.name; formDraft.transporterMobile = t.mobile || '';
+        transporterInput.value = t.name;
+        document.getElementById('f_transporterMobile').value = t.mobile || '';
+        box.innerHTML = '';
+      });
+    });
+    box.querySelectorAll('[data-remove-transporter]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!confirm('Remove this saved transporter suggestion?')) return;
+        const t = matches[Number(btn.dataset.removeTransporter)];
+        state.settings.transporterHistory = (state.settings.transporterHistory || []).filter(x => x.name !== t.name);
+        await dbPut('settings', { key: 'main', value: state.settings });
+        transporterInput.dispatchEvent(new Event('input'));
+        toast('Transporter suggestion removed.');
+      });
+    });
   });
 
   // contact picker (supported on some Android Chrome versions)
@@ -1851,6 +1945,7 @@ function bindRentalFormEvents() {
     const idx = state.rentals.findIndex(r => r.id === formDraft.id);
     if (idx >= 0) state.rentals[idx] = formDraft; else state.rentals.push(formDraft);
     await upsertCustomerFromRental(formDraft);
+    await upsertTransporterHistory(formDraft.transporterName, formDraft.transporterMobile);
     for (const it of formDraft.items) await bumpFrequentItem(it.name);
     state.frequentItems = await dbGetAll('items');
     if (assignedNow) await dbPut('settings', { key: 'main', value: state.settings });
@@ -1914,11 +2009,15 @@ function rentalDetailHTML(r) {
     ${r.payments.map((p, pIdx) => `
       <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);font-size:12.5px;">
         <span>${fmtDate(p.date)} · ${escapeHtml(p.mode)}</span>
-        <span style="display:flex;align-items:center;gap:8px;"><b>${fmtMoney(p.amount)}</b><button type="button" class="pay-del" data-idx="${pIdx}" style="background:none;border:none;color:var(--red);font-size:14px;padding:2px 4px;">✕</button></span>
+        <span style="display:flex;align-items:center;gap:8px;">
+          <b>${fmtMoney(p.amount)}</b>
+          <button type="button" class="pay-edit" data-idx="${pIdx}" style="background:none;border:none;color:var(--amber-dark);font-size:14px;padding:2px 4px;">✏️</button>
+          <button type="button" class="pay-del" data-idx="${pIdx}" style="background:none;border:none;color:var(--red);font-size:14px;padding:2px 4px;">✕</button>
+        </span>
       </div>`).join('')}
   </div>` : ''}
 
-  <div class="section-title">Add Payment</div>
+  <div class="section-title" id="addPaymentTitle">Add Payment</div>
   <div class="card">
     <div class="field-row">
       <div class="field"><label>Amount</label><input id="payAmount" type="number"></div>
@@ -1927,7 +2026,10 @@ function rentalDetailHTML(r) {
       </div>
     </div>
     <div class="field"><label>Date</label><input id="payDate" type="date" value="${todayISO()}"></div>
-    <button class="btn btn-outline" id="addPaymentBtn">+ Record Payment</button>
+    <div class="btn-row">
+      <button class="btn btn-outline" id="addPaymentBtn" style="flex:1;">+ Record Payment</button>
+      <button class="btn btn-ghost btn-sm" id="cancelPayEditBtn" type="button" style="display:none;flex:0 0 auto;">Cancel</button>
+    </div>
   </div>
 
   <div class="btn-row">
@@ -2100,17 +2202,39 @@ function bindRentalDetailEvents(r) {
     pushModalHistory();
     toast('Duplicated — review and save as a new rental.');
   };
+  let editingPaymentIdx = null;
   document.getElementById('addPaymentBtn').onclick = async () => {
     const amt = Number(document.getElementById('payAmount').value);
     if (!amt) { toast('Enter an amount.'); return; }
     const mode = document.getElementById('payMode').value;
     const date = document.getElementById('payDate').value || todayISO();
     r.payments = r.payments || [];
-    r.payments.push({ amount: amt, mode, date });
+    if (editingPaymentIdx !== null) {
+      r.payments[editingPaymentIdx] = { amount: amt, mode, date };
+      toast('Payment updated.');
+    } else {
+      r.payments.push({ amount: amt, mode, date });
+      toast('Payment recorded.');
+    }
     await dbPut('rentals', r);
-    toast('Payment recorded.');
     openRentalDetail(r.id);
   };
+  document.getElementById('cancelPayEditBtn').onclick = () => openRentalDetail(r.id);
+  document.querySelectorAll('.pay-edit').forEach(btn => {
+    btn.onclick = () => {
+      const idx = Number(btn.dataset.idx);
+      const p = r.payments[idx];
+      editingPaymentIdx = idx;
+      document.getElementById('payAmount').value = p.amount;
+      document.getElementById('payMode').value = p.mode;
+      document.getElementById('payDate').value = p.date;
+      document.getElementById('addPaymentBtn').textContent = 'Update Payment';
+      document.getElementById('cancelPayEditBtn').style.display = '';
+      document.getElementById('addPaymentTitle').textContent = 'Edit Payment';
+      const payAmountEl = document.getElementById('payAmount');
+      if (payAmountEl.scrollIntoView) { try { payAmountEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {} }
+    };
+  });
   document.querySelectorAll('.pay-del').forEach(btn => {
     btn.onclick = async () => {
       if (!confirm('Delete this payment record?')) return;
@@ -2202,7 +2326,7 @@ function openInvoicePrint(r) {
         <div class="meta-grid">
           <div><span>Customer</span>${escapeHtml(r.customerInvoiceName || r.customerName)}</div>
           <div><span>Mobile</span>${escapeHtml(r.customerMobile || '—')}</div>
-          <div><span>Delivery Address</span>${escapeHtml(r.deliveryAddress || '—')}</div>
+          <div><span>Address</span>${escapeHtml(r.customerAddress || '—')}</div>
           ${r.vehicleNumber ? `<div><span>Vehicle Number</span>${escapeHtml(r.vehicleNumber)}</div>` : ''}
           <div><span>Invoice Date</span>${fmtDate(r.invoiceDate || r.date)}</div>
           <div><span>Rental Date</span>${fmtDate(r.date)}</div>
@@ -2783,6 +2907,7 @@ async function loadAllData() {
   if (!state.settings.itemCatalog || !state.settings.itemCatalog.length) {
     state.settings.itemCatalog = JSON.parse(JSON.stringify(DEFAULT_ITEM_CATALOG));
   }
+  if (!state.settings.transporterHistory) state.settings.transporterHistory = [];
 }
 
 async function init() {
