@@ -221,7 +221,7 @@ const state = {
   },
   searchQuery: '',
   filter: 'active',
-  invoiceFilter: 'all',
+  invoiceFilter: 'due',
   sort: 'newest',
   editingId: null
 };
@@ -576,8 +576,8 @@ function filterRentals() {
     if (state.filter === 'trash') return r.deleted;
     if (r.deleted) return false;
     if (state.filter === 'active') return itemReturnState(r) !== 'returned' && !r.archived;
-    if (state.filter === 'returned') return itemReturnState(r) === 'returned' && !r.archived;
-    if (state.filter === 'pending') return rentalDue(r) > 0 && !r.archived;
+    if (state.filter === 'returned') return itemReturnState(r) === 'returned' && rentalDue(r) > 0 && !r.archived;
+    if (state.filter === 'pending') return itemReturnState(r) === 'returned' && rentalDue(r) <= 0 && !r.archived;
     return true; // 'all' — everything not deleted, including archived
   });
   if (q) {
@@ -602,7 +602,7 @@ function filterRentals() {
 function renderRentals() {
   const list = filterRentals();
   const filters = [
-    ['active', 'Rented'], ['returned', 'Returned'], ['pending', 'Payment Due'], ['trash', 'Trash'], ['all', 'All']
+    ['active', 'Rented'], ['returned', 'Returned'], ['pending', 'Payment Cleared'], ['trash', 'Trash'], ['all', 'All']
   ];
   const sorts = [['newest', 'Rental Date: New to Old'], ['oldest', 'Rental Date: Old to New'], ['nameAZ', 'Name A-Z'], ['nameZA', 'Name Z-A'],
     ['highestDue', 'Highest Due'], ['lowestDue', 'Lowest Due']];
@@ -688,12 +688,11 @@ function renderCustomerDetail(id) {
     <div class="section-title">Invoices <span style="font-weight:400;color:var(--text-soft);font-size:11.5px;">(${rentals.length})</span></div>
     ${rentals.length ? rentals.map(r => {
       const due = rentalDue(r);
-      return `<div class="card" data-open-rental="${r.id}" style="cursor:pointer;">
-        <div class="top">
-          <div>
-            <div class="name">#${escapeHtml(r.invoiceNumber || '—')}</div>
-            <div class="items">${fmtDate(r.date)} · ${fmtMoney(rentalGrandTotal(r))}</div>
-          </div>
+      return `<div class="card rental-card compact-card" data-open-rental="${r.id}" style="cursor:pointer;">
+        <div class="name">${fmtDate(r.date)} · #${escapeHtml(r.invoiceNumber || '—')}</div>
+        <div class="items">${escapeHtml(r.deliveryAddress || '—')}</div>
+        <div class="meta">
+          <span>Total: ${fmtMoney(rentalGrandTotal(r))}</span>
           <span class="due-amt ${due <= 0 ? 'clear' : ''}">${due > 0 ? 'Due ' + fmtMoney(due) : 'Paid'}</span>
         </div>
       </div>`;
@@ -889,7 +888,7 @@ function renderInvoices() {
     ${list.length ? list.map(r => {
       const due = rentalDue(r);
       const names = (r.items || []).map(i => `${i.name} x${i.qty}`).slice(0, 2).join(', ');
-      return `<div class="card compact-card" data-open-rental="${r.id}" style="cursor:pointer;">
+      return `<div class="card rental-card compact-card" data-open-rental="${r.id}" style="cursor:pointer;">
         <div class="top">
           <div>
             <div class="name">#${escapeHtml(r.invoiceNumber || '—')} · ${escapeHtml(r.customerName || 'No name')}</div>
@@ -2927,6 +2926,7 @@ async function init() {
       detailStack = { view: null, id: null };
       state.view = btn.dataset.view;
       state.filter = 'active';
+      state.invoiceFilter = 'due';
       state.settingsPage = null;
       route();
     });
