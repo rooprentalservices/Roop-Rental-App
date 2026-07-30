@@ -2439,7 +2439,7 @@ function importBackup(file) {
    5. Make sure the Google Drive API is enabled for the project
       (https://console.cloud.google.com/apis/library/drive.googleapis.com)
 ------------------------------------------------------------------------------- */
-const GOOGLE_DRIVE_CLIENT_ID = '596546308856-savj5amrh0aokqqqnpu5a5at912q2o91.apps.googleusercontent.com';
+const GOOGLE_DRIVE_CLIENT_ID = 'PASTE_YOUR_GOOGLE_OAUTH_CLIENT_ID_HERE.apps.googleusercontent.com';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_BACKUP_FILENAME = 'roop-rental-backup.json';
 
@@ -2586,15 +2586,31 @@ async function driveRestoreNow() {
   } catch (e) { toast('Drive backup file was invalid.'); }
 }
 
+// Installed home-screen PWAs run in "standalone" display mode, where mobile
+// browsers often can't show Google sign-in as a small popup — Google falls back
+// to taking over the whole screen instead. So in standalone mode we never request
+// a token without a real tap; auto-backup there only reuses a token already
+// obtained earlier in the same session (e.g. right after Connect, or a manual
+// "Backup Now" tap), and otherwise waits for the next explicit tap.
+function isStandalonePWA() {
+  return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+}
+
 // Fire a backup on app open, and again whenever the app is backgrounded/closed
 // (a PWA has no reliable "on close" hook, so hidden/pagehide is the closest signal).
 function bindDriveAutoBackupLifecycle() {
   if (!driveConfigured()) return;
-  if (state.settings.driveConnected) driveBackupNow(false); // "on open"
+  const standalone = isStandalonePWA();
+  const autoBackup = () => {
+    if (!state.settings.driveConnected) return;
+    if (standalone && !(driveAccessToken && Date.now() < driveTokenExpiresAt - 60000)) return; // no silent re-auth in standalone
+    driveBackupNow(false);
+  };
+  autoBackup(); // "on open"
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') driveBackupNow(false); // "on close"/background
+    if (document.visibilityState === 'hidden') autoBackup(); // "on close"/background
   });
-  window.addEventListener('pagehide', () => driveBackupNow(false));
+  window.addEventListener('pagehide', autoBackup);
 }
 
 /* ---------- PIN Lock ---------- */
