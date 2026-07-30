@@ -2439,7 +2439,7 @@ function importBackup(file) {
    5. Make sure the Google Drive API is enabled for the project
       (https://console.cloud.google.com/apis/library/drive.googleapis.com)
 ------------------------------------------------------------------------------- */
-const GOOGLE_DRIVE_CLIENT_ID = 'PASTE_YOUR_GOOGLE_OAUTH_CLIENT_ID_HERE.apps.googleusercontent.com';
+const GOOGLE_DRIVE_CLIENT_ID = '596546308856-savj5amrh0aokqqqnpu5a5at912q2o91.apps.googleusercontent.com.apps.googleusercontent.com';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_BACKUP_FILENAME = 'roop-rental-backup.json';
 
