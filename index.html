@@ -274,6 +274,7 @@
   }, true);
   window.addEventListener('unhandledrejection', function(e){ showErr('Promise error: ' + (e.reason && e.reason.message ? e.reason.message : e.reason)); });
 </script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="./app.js" onerror="showErr('app.js failed to load — check the file was uploaded and the path/case matches exactly.')"></script>
 </body>
 </html>
