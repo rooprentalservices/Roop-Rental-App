@@ -217,7 +217,10 @@ const state = {
     fingerprintCredentialId: '',
     whatsappReceiptTemplate: '',
     whatsappInvoiceTemplate: '',
-    transporterHistory: []
+    transporterHistory: [],
+    driveConnected: false,
+    driveBackupFileId: '',
+    driveLastBackupAt: ''
   },
   searchQuery: '',
   filter: 'active',
@@ -1103,10 +1106,26 @@ function renderSettingsAppLock() {
 }
 
 function renderSettingsBackup() {
+  const s = state.settings;
+  const driveStatus = !driveConfigured()
+    ? `<p style="font-size:12px;color:var(--text-soft);margin:0 0 10px;">Not set up yet — a Google Cloud OAuth Client ID needs to be added in app.js first.</p>`
+    : s.driveConnected
+      ? `<p style="font-size:12px;color:var(--green);margin:0 0 10px;font-weight:600;">✓ Connected — auto-backs up when you open or close the app${s.driveLastBackupAt ? `<br><span style="color:var(--text-soft);font-weight:400;">Last backup: ${fmtDateTime(s.driveLastBackupAt.slice(0,10), s.driveLastBackupAt.slice(11,16))}</span>` : ''}</p>`
+      : `<p style="font-size:12px;color:var(--text-soft);margin:0 0 10px;">Not connected — data only lives on this phone.</p>`;
   return `
     ${settingsPageHeader('Backup & Restore')}
     <div class="card">
-      <p style="font-size:12.5px;color:var(--text-soft);margin-top:0;">Data is stored only on this phone. Export a backup file regularly and keep it safe (Google Drive, WhatsApp to self, etc). Direct Google Drive sync isn't available in this app version — use manual export/import instead.</p>
+      <p style="font-size:12.5px;color:var(--text-soft);margin-top:0;font-weight:700;">Google Drive Auto-Backup</p>
+      ${driveStatus}
+      <div class="btn-row">
+        ${s.driveConnected
+          ? `<button class="btn btn-outline" id="driveBackupNowBtn">Backup Now</button><button class="btn btn-outline" id="driveRestoreBtn">Restore from Drive</button>`
+          : `<button class="btn btn-primary" id="driveConnectBtn">Connect Google Drive</button>`}
+      </div>
+      ${s.driveConnected ? `<button class="btn btn-ghost" id="driveDisconnectBtn" style="margin-top:8px;">Disconnect</button>` : ''}
+    </div>
+    <div class="card">
+      <p style="font-size:12.5px;color:var(--text-soft);margin-top:0;">You can also export a backup file manually and keep it safe (WhatsApp to self, etc).</p>
       <div class="btn-row">
         <button class="btn btn-primary" id="exportBtn">⬇ Export Backup</button>
         <button class="btn btn-outline" id="importBtn">⬆ Import Backup</button>
@@ -2355,14 +2374,18 @@ function openInvoicePrint(r) {
 }
 
 /* ---------- Backup / Restore ---------- */
-async function exportBackup() {
-  const data = {
+async function buildBackupData() {
+  return {
     exportedAt: new Date().toISOString(),
     settings: state.settings,
     rentals: await dbGetAll('rentals'),
     customers: await dbGetAll('customers'),
     items: await dbGetAll('items')
   };
+}
+
+async function exportBackup() {
+  const data = await buildBackupData();
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -2373,23 +2396,205 @@ async function exportBackup() {
   toast('Backup exported.');
 }
 
+async function applyBackupData(data) {
+  await dbClear('rentals'); await dbClear('customers'); await dbClear('items');
+  for (const r of data.rentals || []) await dbPut('rentals', r);
+  for (const c of data.customers || []) await dbPut('customers', c);
+  for (const i of data.items || []) await dbPut('items', i);
+  if (data.settings) {
+    // keep the live Drive connection state — don't let an old backup file disconnect Drive
+    const { driveConnected, driveBackupFileId, driveLastBackupAt, ...restoredSettings } = data.settings;
+    state.settings = { ...state.settings, ...restoredSettings };
+    await dbPut('settings', { key: 'main', value: state.settings });
+  }
+  await loadAllData();
+}
+
 function importBackup(file) {
   const reader = new FileReader();
   reader.onload = async () => {
     try {
       const data = JSON.parse(reader.result);
       if (!confirm('Importing will replace all current data. Continue?')) return;
-      await dbClear('rentals'); await dbClear('customers'); await dbClear('items');
-      for (const r of data.rentals || []) await dbPut('rentals', r);
-      for (const c of data.customers || []) await dbPut('customers', c);
-      for (const i of data.items || []) await dbPut('items', i);
-      if (data.settings) { state.settings = { ...state.settings, ...data.settings }; await dbPut('settings', { key: 'main', value: state.settings }); }
-      await loadAllData();
+      await applyBackupData(data);
       toast('Backup restored.');
       route();
     } catch (e) { toast('Invalid backup file.'); }
   };
   reader.readAsText(file);
+}
+
+/* ---------- Google Drive Auto-Backup ----------
+   Uses Google Identity Services (GIS) for OAuth and the Drive REST API directly —
+   no server needed, works entirely from the static PWA.
+   Scope is drive.file: the app can only see/edit files IT creates, nothing else
+   in the user's Drive — no verification/review needed from Google for this scope.
+
+   SETUP REQUIRED before this works:
+   1. Go to https://console.cloud.google.com/apis/credentials
+   2. Create an OAuth 2.0 Client ID of type "Web application"
+   3. Under "Authorized JavaScript origins" add the exact origin(s) this app is
+      served from, e.g. https://yourusername.github.io (no path, no trailing slash)
+   4. Paste the Client ID below.
+   5. Make sure the Google Drive API is enabled for the project
+      (https://console.cloud.google.com/apis/library/drive.googleapis.com)
+------------------------------------------------------------------------------- */
+const GOOGLE_DRIVE_CLIENT_ID = 'PASTE_YOUR_GOOGLE_OAUTH_CLIENT_ID_HERE.apps.googleusercontent.com';
+const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const DRIVE_BACKUP_FILENAME = 'roop-rental-backup.json';
+
+let driveTokenClient = null;
+let driveAccessToken = '';
+let driveTokenExpiresAt = 0;
+let driveBackupInFlight = false;
+
+function driveConfigured() {
+  return typeof GOOGLE_DRIVE_CLIENT_ID === 'string' && GOOGLE_DRIVE_CLIENT_ID.endsWith('.apps.googleusercontent.com');
+}
+
+function initDriveAuth() {
+  if (!driveConfigured() || typeof google === 'undefined' || !google.accounts || driveTokenClient) return;
+  driveTokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_DRIVE_CLIENT_ID,
+    scope: GOOGLE_DRIVE_SCOPE,
+    callback: () => {} // overridden per-call below
+  });
+}
+
+// Resolves with an access token, requesting one silently first, only prompting
+// the user interactively when `interactive` is true (must be called from a click).
+function requestDriveToken(interactive) {
+  return new Promise((resolve) => {
+    if (!driveConfigured()) return resolve(null);
+    if (!driveTokenClient) initDriveAuth();
+    if (!driveTokenClient) return resolve(null);
+    if (driveAccessToken && Date.now() < driveTokenExpiresAt - 60000) return resolve(driveAccessToken);
+    try {
+      driveTokenClient.callback = (resp) => {
+        if (resp && resp.access_token) {
+          driveAccessToken = resp.access_token;
+          driveTokenExpiresAt = Date.now() + (Number(resp.expires_in || 3600) * 1000);
+          resolve(driveAccessToken);
+        } else {
+          resolve(null);
+        }
+      };
+      driveTokenClient.error_callback = () => resolve(null);
+      driveTokenClient.requestAccessToken({ prompt: interactive ? 'consent' : '' });
+    } catch (e) {
+      resolve(null);
+    }
+  });
+}
+
+async function connectGoogleDrive() {
+  if (!driveConfigured()) {
+    toast('Google Drive isn\u2019t set up yet — see app.js setup notes.');
+    return;
+  }
+  const token = await requestDriveToken(true);
+  if (!token) { toast('Couldn\u2019t connect to Google Drive.'); return; }
+  state.settings.driveConnected = true;
+  await dbPut('settings', { key: 'main', value: state.settings });
+  toast('Google Drive connected.');
+  route();
+  driveBackupNow(false);
+}
+
+async function disconnectGoogleDrive() {
+  if (driveAccessToken && typeof google !== 'undefined' && google.accounts) {
+    try { google.accounts.oauth2.revoke(driveAccessToken, () => {}); } catch (e) {}
+  }
+  driveAccessToken = ''; driveTokenExpiresAt = 0;
+  state.settings.driveConnected = false;
+  await dbPut('settings', { key: 'main', value: state.settings });
+  toast('Google Drive disconnected.');
+  route();
+}
+
+async function driveFindOrCreateFileId(token) {
+  if (state.settings.driveBackupFileId) return state.settings.driveBackupFileId;
+  // drive.file scope only ever shows us files this app created, so this search is safe/scoped
+  const q = encodeURIComponent(`name='${DRIVE_BACKUP_FILENAME}' and trashed=false`);
+  const listRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (listRes.ok) {
+    const listData = await listRes.json();
+    if (listData.files && listData.files.length) {
+      state.settings.driveBackupFileId = listData.files[0].id;
+      await dbPut('settings', { key: 'main', value: state.settings });
+      return state.settings.driveBackupFileId;
+    }
+  }
+  // no existing file — create an empty placeholder, then we PATCH content into it below
+  const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: DRIVE_BACKUP_FILENAME })
+  });
+  if (!createRes.ok) return null;
+  const created = await createRes.json();
+  state.settings.driveBackupFileId = created.id;
+  await dbPut('settings', { key: 'main', value: state.settings });
+  return created.id;
+}
+
+async function driveBackupNow(interactive) {
+  if (!driveConfigured() || !state.settings.driveConnected || driveBackupInFlight) return false;
+  driveBackupInFlight = true;
+  try {
+    const token = await requestDriveToken(!!interactive);
+    if (!token) { driveBackupInFlight = false; return false; }
+    const fileId = await driveFindOrCreateFileId(token);
+    if (!fileId) { driveBackupInFlight = false; return false; }
+    const data = await buildBackupData();
+    const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+      keepalive: true // lets the request finish even if the tab is closing
+    });
+    driveBackupInFlight = false;
+    if (!uploadRes.ok) return false;
+    state.settings.driveLastBackupAt = new Date().toISOString();
+    await dbPut('settings', { key: 'main', value: state.settings });
+    if (state.settingsPage === 'backup') route();
+    return true;
+  } catch (e) {
+    driveBackupInFlight = false;
+    return false;
+  }
+}
+
+async function driveRestoreNow() {
+  if (!driveConfigured() || !state.settings.driveConnected) { toast('Connect Google Drive first.'); return; }
+  const token = await requestDriveToken(true);
+  if (!token) { toast('Couldn\u2019t connect to Google Drive.'); return; }
+  const fileId = state.settings.driveBackupFileId || await driveFindOrCreateFileId(token);
+  if (!fileId) { toast('No Drive backup found yet.'); return; }
+  if (!confirm('Restoring will replace all current data on this device with the Drive backup. Continue?')) return;
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!res.ok) { toast('Could not read Drive backup.'); return; }
+  try {
+    const data = await res.json();
+    await applyBackupData(data);
+    toast('Restored from Google Drive.');
+    route();
+  } catch (e) { toast('Drive backup file was invalid.'); }
+}
+
+// Fire a backup on app open, and again whenever the app is backgrounded/closed
+// (a PWA has no reliable "on close" hook, so hidden/pagehide is the closest signal).
+function bindDriveAutoBackupLifecycle() {
+  if (!driveConfigured()) return;
+  if (state.settings.driveConnected) driveBackupNow(false); // "on open"
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') driveBackupNow(false); // "on close"/background
+  });
+  window.addEventListener('pagehide', () => driveBackupNow(false));
 }
 
 /* ---------- PIN Lock ---------- */
@@ -2637,6 +2842,18 @@ function bindSettingsBackupEvents() {
   document.getElementById('importFile').addEventListener('change', (e) => {
     if (e.target.files[0]) importBackup(e.target.files[0]);
   });
+  const connectBtn = document.getElementById('driveConnectBtn');
+  if (connectBtn) connectBtn.onclick = connectGoogleDrive;
+  const disconnectBtn = document.getElementById('driveDisconnectBtn');
+  if (disconnectBtn) disconnectBtn.onclick = disconnectGoogleDrive;
+  const backupNowBtn = document.getElementById('driveBackupNowBtn');
+  if (backupNowBtn) backupNowBtn.onclick = async () => {
+    toast('Backing up…');
+    const ok = await driveBackupNow(true);
+    toast(ok ? 'Backed up to Google Drive.' : 'Backup failed — try reconnecting.');
+  };
+  const restoreBtn = document.getElementById('driveRestoreBtn');
+  if (restoreBtn) restoreBtn.onclick = driveRestoreNow;
 }
 
 function bindSettingsThemeEvents() {
@@ -2912,6 +3129,8 @@ async function loadAllData() {
 async function init() {
   await openDB();
   await loadAllData();
+  initDriveAuth();
+  bindDriveAutoBackupLifecycle();
   applyThemeConfig();
   bindSystemThemeListener();
   document.getElementById('headerTitle').textContent = state.settings.businessName;
