@@ -90,6 +90,18 @@ function fmtDateTime(iso, time) {
   if (!iso) return '—';
   return time ? `${fmtDate(iso)}, ${fmtTime(time)}` : fmtDate(iso);
 }
+// "15-Jul-2026" style, used only by the customer invoice preview card
+const MON_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function fmtDateMon(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso + (iso.length === 10 ? 'T00:00:00' : ''));
+  if (isNaN(d)) return iso;
+  return `${pad2(d.getDate())}-${MON_SHORT[d.getMonth()]}-${d.getFullYear()}`;
+}
+function fmtDaysLabel(n) {
+  n = Number(n) || 0;
+  return `${n} ${n === 1 ? 'Day' : 'Days'}`;
+}
 function combineDateTime(dateStr, timeStr) {
   return new Date(`${dateStr || todayISO()}T${timeStr || '00:00'}:00`);
 }
@@ -691,12 +703,22 @@ function renderCustomerDetail(id) {
     <div class="section-title">Invoices <span style="font-weight:400;color:var(--text-soft);font-size:11.5px;">(${rentals.length})</span></div>
     ${rentals.length ? rentals.map(r => {
       const due = rentalDue(r);
-      return `<div class="card rental-card compact-card" data-open-rental="${r.id}" style="cursor:pointer;">
-        <div class="name">${fmtDate(r.date)} · #${escapeHtml(r.invoiceNumber || '—')}</div>
-        <div class="items">${escapeHtml(r.deliveryAddress || '—')}</div>
-        <div class="meta">
+      const periodStr = `${fmtDateMon(r.date)} → ${r.actualReturnDate ? fmtDateMon(r.actualReturnDate) : 'Ongoing'}`;
+      const itemsStr = (r.items || []).length
+        ? r.items.map(i => `${escapeHtml(i.name)} × ${i.qty}`).join(', ')
+        : '—';
+      return `<div class="card invoice-preview-card" data-open-rental="${r.id}" style="cursor:pointer;">
+        <div class="ip-line1">
+          <span class="ip-num">#${escapeHtml(r.invoiceNumber || '—')}</span>
+          <span class="ip-period">${periodStr}</span>
+          <span class="ip-days">= ${fmtDaysLabel(rentalDays(r))}</span>
+        </div>
+        <div class="ip-line2">${itemsStr}</div>
+        <div class="ip-line3">
+          <span class="ip-loc">${escapeHtml(r.deliveryAddress || '')}</span>
           <span>Total: ${fmtMoney(rentalGrandTotal(r))}</span>
-          <span class="due-amt ${due <= 0 ? 'clear' : ''}">${due > 0 ? 'Due ' + fmtMoney(due) : 'Paid'}</span>
+          <span>Paid: ${fmtMoney(rentalPaid(r))}</span>
+          <span class="ip-due ${due > 0 ? 'pending' : 'clear'}">Due: ${fmtMoney(due)}</span>
         </div>
       </div>`;
     }).join('') : '<div class="empty">No invoices yet.</div>'}
@@ -2439,7 +2461,7 @@ function importBackup(file) {
    5. Make sure the Google Drive API is enabled for the project
       (https://console.cloud.google.com/apis/library/drive.googleapis.com)
 ------------------------------------------------------------------------------- */
-const GOOGLE_DRIVE_CLIENT_ID = '596546308856-savj5amrh0aokqqqnpu5a5at912q2o91.apps.googleusercontent.com';
+const GOOGLE_DRIVE_CLIENT_ID = 'PASTE_YOUR_GOOGLE_OAUTH_CLIENT_ID_HERE.apps.googleusercontent.com';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_BACKUP_FILENAME = 'roop-rental-backup.json';
 
