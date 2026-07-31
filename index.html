@@ -88,13 +88,14 @@
   .due-amt{font-weight:800;font-size:14px;color:var(--red);}
   .due-amt.clear{color:var(--green);}
   .invoice-preview-card{padding:10px 12px;margin-bottom:8px;}
-  .invoice-preview-card .ip-line1{display:grid;grid-template-columns:auto 1fr auto;align-items:baseline;gap:8px;font-size:13px;font-weight:700;}
-  .invoice-preview-card .ip-line1 .ip-num{white-space:nowrap;}
+  .invoice-preview-card .ip-line1{display:grid;grid-template-columns:78px 1fr 70px;align-items:baseline;gap:6px;font-size:13px;font-weight:700;}
+  .invoice-preview-card .ip-line1 .ip-num{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .invoice-preview-card .ip-line1 .ip-period{text-align:center;color:var(--text-soft);font-weight:600;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .invoice-preview-card .ip-line1 .ip-days{white-space:nowrap;}
+  .invoice-preview-card .ip-line1 .ip-days{white-space:nowrap;text-align:right;}
   .invoice-preview-card .ip-line2{font-size:12px;color:var(--text-soft);margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
-  .invoice-preview-card .ip-line3{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:10px;align-items:baseline;margin-top:7px;font-size:11px;color:var(--text-soft);}
+  .invoice-preview-card .ip-line3{display:grid;grid-template-columns:minmax(0,1fr) 90px 82px 82px;gap:6px;align-items:baseline;margin-top:7px;font-size:10.8px;color:var(--text-soft);}
   .invoice-preview-card .ip-line3 .ip-loc{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .invoice-preview-card .ip-line3 span:not(.ip-loc){white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .invoice-preview-card .ip-line3 .ip-due{font-weight:800;}
   .invoice-preview-card .ip-line3 .ip-due.pending{color:var(--red);}
   .invoice-preview-card .ip-line3 .ip-due.clear{color:var(--green);}

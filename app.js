@@ -703,7 +703,7 @@ function renderCustomerDetail(id) {
     <div class="section-title">Invoices <span style="font-weight:400;color:var(--text-soft);font-size:11.5px;">(${rentals.length})</span></div>
     ${rentals.length ? rentals.map(r => {
       const due = rentalDue(r);
-      const periodStr = `${fmtDateMon(r.date)} → ${r.actualReturnDate ? fmtDateMon(r.actualReturnDate) : 'Ongoing'}`;
+      const periodStr = `📅 ${fmtDateMon(r.date)} → ${r.actualReturnDate ? fmtDateMon(r.actualReturnDate) : 'Ongoing'}`;
       const itemsStr = (r.items || []).length
         ? r.items.map(i => `${escapeHtml(i.name)} × ${i.qty}`).join(', ')
         : '—';
@@ -715,7 +715,7 @@ function renderCustomerDetail(id) {
         </div>
         <div class="ip-line2">${itemsStr}</div>
         <div class="ip-line3">
-          <span class="ip-loc">${escapeHtml(r.deliveryAddress || '')}</span>
+          <span class="ip-loc">${r.deliveryAddress ? '📍 ' + escapeHtml(r.deliveryAddress) : ''}</span>
           <span>Total: ${fmtMoney(rentalGrandTotal(r))}</span>
           <span>Paid: ${fmtMoney(rentalPaid(r))}</span>
           <span class="ip-due ${due > 0 ? 'pending' : 'clear'}">Due: ${fmtMoney(due)}</span>
