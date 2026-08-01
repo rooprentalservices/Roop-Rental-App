@@ -702,9 +702,11 @@ function renderCustomerDetail(id) {
       return `<div class="card invoice-preview-card" data-open-rental="${r.id}" style="cursor:pointer;">
         <div class="ip-line1">
           <span class="ip-num">#${escapeHtml(r.invoiceNumber || '—')}</span>
+        </div>
+        <div class="ip-period">
+          <span>${periodStr}</span>
           <span class="ip-days">= ${fmtDaysLabel(rentalDays(r))}</span>
         </div>
-        <div class="ip-period">${periodStr}</div>
         <div class="ip-line2">${itemsStr}</div>
         ${r.deliveryAddress ? `<div class="ip-loc">📍 ${escapeHtml(r.deliveryAddress)}</div>` : ''}
         <div class="ip-line3">
