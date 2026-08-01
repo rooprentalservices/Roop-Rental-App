@@ -2404,7 +2404,8 @@ function openInvoicePrint(r) {
       .sig-block{page-break-inside:avoid;}
       @media print { body{background:#fff;} }
     </style></head><body>
-    <div class="sheet">
+    <div id="pageBox">
+    <div class="sheet" id="sheetEl">
       <div class="band">
         <div class="band-top">
           ${s.logoImg ? `<img src="${s.logoImg}">` : ''}
@@ -2437,21 +2438,31 @@ function openInvoicePrint(r) {
         ${stampSigBlock}
       </div>
     </div>
+    </div>
     <script>
       window.onload = () => {
         try {
-          const sheet = document.querySelector('.sheet');
+          const sheet = document.getElementById('sheetEl');
+          const pageBox = document.getElementById('pageBox');
           const MM_TO_PX = 96 / 25.4;
           const pageContentHeightPx = (297 - 28) * MM_TO_PX; // A4 height minus 14mm top+bottom @page margins
-          const sheetHeightPx = sheet.scrollHeight;
-          if (sheetHeightPx > pageContentHeightPx) {
-            // Shrink the whole invoice (not just cut it off) so it lands on a single page.
+          const naturalHeightPx = sheet.offsetHeight;
+          if (naturalHeightPx > pageContentHeightPx) {
             // Floored at 0.55 so very large item lists stay readable rather than shrinking to nothing.
-            const scale = Math.max(pageContentHeightPx / sheetHeightPx, 0.55);
-            sheet.style.zoom = scale;
+            const scale = Math.max(pageContentHeightPx / naturalHeightPx, 0.55);
+            const naturalWidthPx = sheet.offsetWidth;
+            sheet.style.transform = 'scale(' + scale + ')';
+            sheet.style.transformOrigin = 'top left';
+            // Setting pageBox's actual box height (not just a visual transform) is what makes
+            // Chrome's print/PDF pagination — including Android's native print — treat this as
+            // shorter content and keep it on one page, instead of just shrinking it visually.
+            pageBox.style.height = (naturalHeightPx * scale) + 'px';
+            pageBox.style.width = (naturalWidthPx * scale) + 'px';
+            pageBox.style.margin = '0 auto';
+            pageBox.style.overflow = 'hidden';
           }
         } catch (e) {}
-        setTimeout(() => window.print(), 60);
+        setTimeout(() => window.print(), 120);
       };
     <\/script>
     </body></html>
