@@ -2342,7 +2342,7 @@ function openInvoicePrint(r) {
   const due = rentalDue(r);
 
   const stampSigBlock = `
-    <div class="sig-block" style="display:flex;justify-content:flex-end;gap:24px;margin-top:36px;align-items:flex-end;">
+    <div class="sig-block" style="display:flex;justify-content:flex-end;gap:24px;margin-top:22px;align-items:flex-end;">
       ${s.stampImg ? `<img src="${s.stampImg}" style="max-height:90px;max-width:110px;opacity:.9;">` : ''}
       ${s.signatureImg ? `<div style="text-align:center;"><img src="${s.signatureImg}" style="max-height:60px;max-width:150px;display:block;margin:0 auto;"><div style="border-top:1px solid #333;font-size:11px;padding-top:3px;margin-top:2px;">${s.ownerName ? escapeHtml(s.ownerName) + '<br>' : ''}Authorized Signature</div></div>` : ''}
     </div>`;
@@ -2369,7 +2369,7 @@ function openInvoicePrint(r) {
       * { box-sizing: border-box; }
       @page { size: A4 portrait; margin: 14mm 12mm; }
       body{font-family:'Segoe UI',Arial,sans-serif;padding:0;margin:0;color:#161b33;background:#f3f4fa;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-      .sheet{max-width:720px;margin:0 auto;background:#fff;}
+      .sheet{width:186mm;margin:0 auto;background:#fff;}
       .band{background:linear-gradient(135deg,${bandC1},${bandC2});color:#fff;padding:26px 32px 20px;position:relative;overflow:hidden;}
       .band::after{content:'';position:absolute;right:-40px;top:-40px;width:160px;height:160px;background:${accent}40;border-radius:50%;}
       .band-top{display:flex;align-items:center;gap:14px;}
@@ -2378,8 +2378,8 @@ function openInvoicePrint(r) {
       .band .tagline{opacity:.9;font-size:11.5px;margin-top:3px;font-style:italic;}
       .band .sub{opacity:.9;font-size:12px;margin-top:8px;line-height:1.7;}
       .invoice-tag{display:inline-block;background:${accent};color:${isDarkColor(accent) ? '#fff' : '#2b1400'};font-weight:800;font-size:12px;padding:4px 12px;border-radius:20px;margin-top:10px;letter-spacing:.2px;}
-      .body{padding:26px 32px 10px;}
-      .meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:11px 24px;background:${tintBg};border:1px solid ${tintBorder};border-radius:10px;padding:16px 18px;margin-bottom:20px;font-size:13px;}
+      .body{padding:20px 32px 8px;}
+      .meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px 24px;background:${tintBg};border:1px solid ${tintBorder};border-radius:10px;padding:13px 18px;margin-bottom:16px;font-size:13px;}
       .meta-grid div span{display:block;color:${shadeHex(accent, -0.4)};font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;font-weight:700;margin-bottom:2px;}
       table{width:100%;border-collapse:collapse;margin-top:6px;border-radius:10px;overflow:hidden;box-shadow:0 0 0 1px ${tintBorder};}
       thead{display:table-header-group;}
@@ -2388,7 +2388,7 @@ function openInvoicePrint(r) {
       th{background:${bandC1};color:#fff;padding:11px 10px;font-size:12px;text-align:left;font-weight:600;letter-spacing:.2px;}
       th:nth-child(2){text-align:center;} th:nth-child(3),th:nth-child(4){text-align:right;}
       td{padding:10px 10px;font-size:13px;border-bottom:1px solid #eee;}
-      .totals{margin-top:18px;width:100%;max-width:340px;margin-left:auto;background:${tintBg};border:1px solid ${tintBorder};border-radius:10px;padding:16px 18px;page-break-inside:avoid;}
+      .totals{margin-top:14px;width:100%;max-width:340px;margin-left:auto;background:${tintBg};border:1px solid ${tintBorder};border-radius:10px;padding:13px 18px;page-break-inside:avoid;}
       .totals .trow{display:flex;justify-content:space-between;align-items:baseline;padding:4px 0;font-size:13px;}
       .totals .trow > span:first-child{text-align:left;}
       .totals .trow > span:last-child{text-align:right;font-variant-numeric:tabular-nums;}
@@ -2397,12 +2397,12 @@ function openInvoicePrint(r) {
       .totals .trow.sub{padding-left:14px;font-size:12.5px;color:#5b6280;}
       .totals .trow.grand-total{font-weight:800;font-size:15.5px;border-top:2px solid ${accent};padding-top:9px;margin-top:8px;color:${bandC1};}
       .totals .trow.balance-due{font-weight:800;font-size:19px;border-top:2px solid ${accent};padding-top:11px;margin-top:9px;color:${bandC1};}
-      .terms{margin-top:24px;background:#f7f8fa;border:1px solid #e4e6f2;border-radius:10px;padding:16px 18px;page-break-inside:avoid;}
+      .terms{margin-top:16px;background:#f7f8fa;border:1px solid #e4e6f2;border-radius:10px;padding:13px 18px;page-break-inside:avoid;}
       .terms h3{margin:0 0 8px;font-size:13px;color:${bandC1};font-weight:700;}
       .terms ol{margin:0;padding-left:18px;}
       .terms li{font-size:11.5px;color:#444;line-height:1.7;margin-bottom:3px;}
       .sig-block{page-break-inside:avoid;}
-      @media print { body{background:#fff;} .sheet{max-width:100%;} }
+      @media print { body{background:#fff;} }
     </style></head><body>
     <div class="sheet">
       <div class="band">
@@ -2437,7 +2437,23 @@ function openInvoicePrint(r) {
         ${stampSigBlock}
       </div>
     </div>
-    <script>window.onload = () => window.print();<\/script>
+    <script>
+      window.onload = () => {
+        try {
+          const sheet = document.querySelector('.sheet');
+          const MM_TO_PX = 96 / 25.4;
+          const pageContentHeightPx = (297 - 28) * MM_TO_PX; // A4 height minus 14mm top+bottom @page margins
+          const sheetHeightPx = sheet.scrollHeight;
+          if (sheetHeightPx > pageContentHeightPx) {
+            // Shrink the whole invoice (not just cut it off) so it lands on a single page.
+            // Floored at 0.55 so very large item lists stay readable rather than shrinking to nothing.
+            const scale = Math.max(pageContentHeightPx / sheetHeightPx, 0.55);
+            sheet.style.zoom = scale;
+          }
+        } catch (e) {}
+        setTimeout(() => window.print(), 60);
+      };
+    <\/script>
     </body></html>
   `);
   w.document.close();
