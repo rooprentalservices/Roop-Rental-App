@@ -555,6 +555,7 @@ function truncate(s, n) {
 
 function rentalCardHTML(r) {
   const badge = rentalStatusBadge(r);
+  const badgeLabel = badge.cls === 'on' ? `${fmtDaysLabel(rentalDays(r))} On Rent` : badge.label;
   const due = rentalDue(r);
   const names = (r.items || []).map(i => `${i.name} x${i.qty}`).filter(Boolean);
   const itemPreview = names.slice(0, 3).join(', ') + (names.length > 3 ? ` +${names.length - 3} more` : '') || '—';
@@ -565,7 +566,7 @@ function rentalCardHTML(r) {
         <div class="name">${escapeHtml(r.customerName || 'No name')}</div>
         <div class="items">${escapeHtml(itemPreview)}</div>
       </div>
-      <span class="badge ${badge.cls}">${badge.label}</span>
+      <span class="badge ${badge.cls}">${badgeLabel}</span>
     </div>
     <div class="meta">
       <span>${r.invoiceNumber ? '#' + escapeHtml(r.invoiceNumber) : 'Not invoiced'}</span>
