@@ -412,6 +412,17 @@ function rentalGrandTotal(r) {
 function rentalDue(r) {
   return Math.max(rentalGrandTotal(r) - rentalPaid(r), 0);
 }
+// Revenue-only helpers — used ONLY by Dashboard/Reports so transport pass-through
+// never counts as business income. Customer balances/due amounts above are untouched.
+function rentalRevenueBase(r) {
+  // Rental Charges after Discount — the only part of the bill that's actual business revenue
+  return Math.max(rentalItemsTotal(r) - (Number(r.discount) || 0), 0);
+}
+function rentalRevenueCollected(r) {
+  // Cash collected, capped to the rental-charges portion — money collected beyond that
+  // is assumed to cover transport pass-through and old dues, not counted as revenue
+  return Math.min(rentalPaid(r), rentalRevenueBase(r));
+}
 function itemReturnState(r) {
   if (r.actualReturnDate) return 'returned';
   const items = r.items || [];
@@ -483,7 +494,7 @@ function computeStats() {
   const pendingDueTotal = pendingDueRentals.reduce((s, r) => s + rentalDue(r), 0);
   const pendingDueCount = pendingDueRentals.length;
   const monthStart = today.slice(0, 7);
-  const monthlyRevenue = active.filter(r => (r.date || '').startsWith(monthStart)).reduce((s, r) => s + rentalPaid(r), 0);
+  const monthlyRevenue = active.filter(r => (r.date || '').startsWith(monthStart)).reduce((s, r) => s + rentalRevenueCollected(r), 0);
   return { totalActive, todayRentals, pendingDueTotal, pendingDueCount, monthlyRevenue };
 }
 
@@ -936,7 +947,7 @@ function renderReports() {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     months.push(d.toISOString().slice(0, 7));
   }
-  const monthlyData = months.map(m => active.filter(r => (r.date || '').startsWith(m)).reduce((s, r) => s + rentalPaid(r), 0));
+  const monthlyData = months.map(m => active.filter(r => (r.date || '').startsWith(m)).reduce((s, r) => s + rentalRevenueCollected(r), 0));
   const maxMonth = Math.max(...monthlyData, 1);
 
   return `
@@ -1359,6 +1370,13 @@ function transportBilledTotal(r) {
   if (r.transportDeliveryPaidBy === 'me') t += Number(r.transportChargeDelivery) || 0;
   if (r.transportPickupPaidBy === 'me') t += Number(r.transportChargePickup) || 0;
   return t;
+}
+// Same "billed to customer" logic as transportBilledTotal, broken out per leg for invoice display
+function transportBilledDelivery(r) {
+  return r.transportDeliveryPaidBy === 'me' ? (Number(r.transportChargeDelivery) || 0) : 0;
+}
+function transportBilledPickup(r) {
+  return r.transportPickupPaidBy === 'me' ? (Number(r.transportChargePickup) || 0) : 0;
 }
 
 function openRentalForm(existingId) {
@@ -2309,40 +2327,81 @@ function openInvoicePrint(r) {
   const tintBorder = shadeHex(accent, 0.65);
   const w = window.open('', '_blank');
   const rows = r.items.map((it, i) => `<tr style="background:${i % 2 ? tintBg : '#ffffff'}"><td>${escapeHtml(it.name)}</td><td style="text-align:center;">${it.qty}</td><td style="text-align:right;">${fmtMoney(it.rentPerDay)}</td><td style="text-align:right;">${fmtMoney(itemTotal(it, r))}</td></tr>`).join('');
+
+  // ---- Financial summary values (all figures reuse the app's existing calculation
+  // functions unchanged — this only changes how they're grouped/labeled/displayed) ----
+  const rentalCharges = rentalItemsTotal(r);
+  const deliveryBilled = transportBilledDelivery(r);
+  const pickupBilled = transportBilledPickup(r);
+  const transportTotal = deliveryBilled + pickupBilled;
+  const discount = Number(r.discount) || 0;
+  const oldDues = Number(r.oldDues) || 0;
+  const refund = Number(r.refundAmount) || 0;
+  const rentalTotal = rentalGrandTotal(r); // unchanged calc: items + transport - discount + oldDues - refund
+  const paid = rentalPaid(r);
   const due = rentalDue(r);
+
   const stampSigBlock = `
-    <div style="display:flex;justify-content:flex-end;gap:24px;margin-top:36px;align-items:flex-end;">
+    <div class="sig-block" style="display:flex;justify-content:flex-end;gap:24px;margin-top:36px;align-items:flex-end;">
       ${s.stampImg ? `<img src="${s.stampImg}" style="max-height:90px;max-width:110px;opacity:.9;">` : ''}
-      ${s.signatureImg ? `<div style="text-align:center;"><img src="${s.signatureImg}" style="max-height:60px;max-width:150px;display:block;margin:0 auto;"><div style="border-top:1px solid #333;font-size:11px;padding-top:3px;margin-top:2px;">Authorized Signature</div></div>` : ''}
+      ${s.signatureImg ? `<div style="text-align:center;"><img src="${s.signatureImg}" style="max-height:60px;max-width:150px;display:block;margin:0 auto;"><div style="border-top:1px solid #333;font-size:11px;padding-top:3px;margin-top:2px;">${s.ownerName ? escapeHtml(s.ownerName) + '<br>' : ''}Authorized Signature</div></div>` : ''}
     </div>`;
+
+  const totalsHTML = `
+    <div class="totals">
+      <div class="trow"><span>Rental Charges</span><span>${fmtMoney(rentalCharges)}</span></div>
+      ${transportTotal > 0 ? `
+      <div class="trow section-label"><span>Transportation Charges</span><span></span></div>
+      ${deliveryBilled > 0 ? `<div class="trow sub"><span>Delivery</span><span>${fmtMoney(deliveryBilled)}</span></div>` : ''}
+      ${pickupBilled > 0 ? `<div class="trow sub"><span>Pickup</span><span>${fmtMoney(pickupBilled)}</span></div>` : ''}
+      ` : ''}
+      <div class="trow"><span>Discount</span><span>${discount > 0 ? '-' + fmtMoney(discount) : fmtMoney(0)}</span></div>
+      ${oldDues > 0 ? `<div class="trow"><span>Old Dues Carried Forward</span><span>${fmtMoney(oldDues)}</span></div>` : ''}
+      ${refund > 0 ? `<div class="trow"><span>Refund Adjustment</span><span>-${fmtMoney(refund)}</span></div>` : ''}
+      <div class="trow grand-total"><span>Rental Total</span><span>${fmtMoney(rentalTotal)}</span></div>
+      <div class="trow"><span>Advance Received</span><span>${paid > 0 ? '-' + fmtMoney(paid) : fmtMoney(0)}</span></div>
+      <div class="trow balance-due"><span>Balance Due</span><span>${fmtMoney(due)}</span></div>
+    </div>`;
+
   w.document.write(`
-    <html><head><title>Invoice ${escapeHtml(r.invoiceNumber || '')} - ${escapeHtml(r.customerName)}</title>
+    <html><head><title>Invoice ${escapeHtml(r.invoiceNumber || 'Draft')}</title>
     <style>
       * { box-sizing: border-box; }
-      body{font-family:Arial,'Segoe UI',sans-serif;padding:0;margin:0;color:#161b33;background:#f3f4fa;}
+      @page { size: A4 portrait; margin: 14mm 12mm; }
+      body{font-family:'Segoe UI',Arial,sans-serif;padding:0;margin:0;color:#161b33;background:#f3f4fa;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
       .sheet{max-width:720px;margin:0 auto;background:#fff;}
       .band{background:linear-gradient(135deg,${bandC1},${bandC2});color:#fff;padding:26px 32px 20px;position:relative;overflow:hidden;}
       .band::after{content:'';position:absolute;right:-40px;top:-40px;width:160px;height:160px;background:${accent}40;border-radius:50%;}
       .band-top{display:flex;align-items:center;gap:14px;}
       .band-top img{height:52px;width:52px;object-fit:contain;border-radius:12px;background:#fff;padding:4px;}
-      .band h1{margin:0;font-size:21px;letter-spacing:.3px;}
+      .band h1{margin:0;font-size:22px;letter-spacing:.3px;font-weight:700;}
       .band .tagline{opacity:.9;font-size:11.5px;margin-top:3px;font-style:italic;}
-      .band .sub{opacity:.85;font-size:12px;margin-top:8px;line-height:1.6;}
-      .invoice-tag{display:inline-block;background:${accent};color:${isDarkColor(accent) ? '#fff' : '#2b1400'};font-weight:800;font-size:12px;padding:4px 12px;border-radius:20px;margin-top:10px;}
-      .body{padding:24px 32px 8px;}
-      .meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 24px;background:${tintBg};border:1px solid ${tintBorder};border-radius:10px;padding:14px 16px;margin-bottom:18px;font-size:13px;}
-      .meta-grid div span{display:block;color:${shadeHex(accent, -0.4)};font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;font-weight:700;}
-      table{width:100%;border-collapse:collapse;margin-top:4px;border-radius:10px;overflow:hidden;}
-      th{background:${bandC1};color:#fff;padding:10px 8px;font-size:12px;text-align:left;}
+      .band .sub{opacity:.9;font-size:12px;margin-top:8px;line-height:1.7;}
+      .invoice-tag{display:inline-block;background:${accent};color:${isDarkColor(accent) ? '#fff' : '#2b1400'};font-weight:800;font-size:12px;padding:4px 12px;border-radius:20px;margin-top:10px;letter-spacing:.2px;}
+      .body{padding:26px 32px 10px;}
+      .meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:11px 24px;background:${tintBg};border:1px solid ${tintBorder};border-radius:10px;padding:16px 18px;margin-bottom:20px;font-size:13px;}
+      .meta-grid div span{display:block;color:${shadeHex(accent, -0.4)};font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;font-weight:700;margin-bottom:2px;}
+      table{width:100%;border-collapse:collapse;margin-top:6px;border-radius:10px;overflow:hidden;box-shadow:0 0 0 1px ${tintBorder};}
+      thead{display:table-header-group;}
+      tbody{display:table-row-group;}
+      tr{page-break-inside:avoid;}
+      th{background:${bandC1};color:#fff;padding:11px 10px;font-size:12px;text-align:left;font-weight:600;letter-spacing:.2px;}
       th:nth-child(2){text-align:center;} th:nth-child(3),th:nth-child(4){text-align:right;}
-      td{padding:9px 8px;font-size:13px;border-bottom:1px solid #eee;}
-      .totals{margin-top:16px;width:100%;max-width:320px;margin-left:auto;background:${tintBg};border:1px solid ${tintBorder};border-radius:10px;padding:14px 16px;}
-      .totals div{display:flex;justify-content:space-between;padding:4px 0;font-size:13px;}
-      .totals .grand{font-weight:800;font-size:16px;border-top:2px solid ${accent};padding-top:8px;margin-top:6px;color:${bandC1};}
-      .terms{margin-top:22px;background:#f7f8fa;border:1px solid #e4e6f2;border-radius:10px;padding:14px 16px;}
-      .terms h3{margin:0 0 8px;font-size:13px;color:${bandC1};}
+      td{padding:10px 10px;font-size:13px;border-bottom:1px solid #eee;}
+      .totals{margin-top:18px;width:100%;max-width:340px;margin-left:auto;background:${tintBg};border:1px solid ${tintBorder};border-radius:10px;padding:16px 18px;page-break-inside:avoid;}
+      .totals .trow{display:flex;justify-content:space-between;align-items:baseline;padding:4px 0;font-size:13px;}
+      .totals .trow > span:first-child{text-align:left;}
+      .totals .trow > span:last-child{text-align:right;font-variant-numeric:tabular-nums;}
+      .totals .trow.section-label{margin-top:6px;}
+      .totals .trow.section-label span:first-child{font-weight:700;font-size:11.5px;color:${bandC1};text-transform:uppercase;letter-spacing:.3px;}
+      .totals .trow.sub{padding-left:14px;font-size:12.5px;color:#5b6280;}
+      .totals .trow.grand-total{font-weight:800;font-size:15.5px;border-top:2px solid ${accent};padding-top:9px;margin-top:8px;color:${bandC1};}
+      .totals .trow.balance-due{font-weight:800;font-size:19px;border-top:2px solid ${accent};padding-top:11px;margin-top:9px;color:${bandC1};}
+      .terms{margin-top:24px;background:#f7f8fa;border:1px solid #e4e6f2;border-radius:10px;padding:16px 18px;page-break-inside:avoid;}
+      .terms h3{margin:0 0 8px;font-size:13px;color:${bandC1};font-weight:700;}
       .terms ol{margin:0;padding-left:18px;}
-      .terms li{font-size:11.5px;color:#444;line-height:1.6;margin-bottom:3px;}
+      .terms li{font-size:11.5px;color:#444;line-height:1.7;margin-bottom:3px;}
+      .sig-block{page-break-inside:avoid;}
       @media print { body{background:#fff;} .sheet{max-width:100%;} }
     </style></head><body>
     <div class="sheet">
@@ -2369,13 +2428,7 @@ function openInvoicePrint(r) {
           <div><span>Total Days</span>${rentalDays(r)}</div>
         </div>
         <table><thead><tr><th>Item</th><th>Qty</th><th>Rate/Day</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>
-        <div class="totals">
-          <div><span>Items Total</span><span>${fmtMoney(rentalItemsTotal(r))}</span></div>
-          ${transportBilledTotal(r) > 0 ? `<div><span>Transportation</span><span>${fmtMoney(transportBilledTotal(r))}</span></div>` : ''}
-          ${Number(r.discount) > 0 ? `<div><span>Discount</span><span>-${fmtMoney(r.discount)}</span></div>` : ''}
-          <div><span>Advance Paid</span><span>-${fmtMoney(rentalPaid(r))}</span></div>
-          <div class="grand"><span>Balance Due</span><span>${fmtMoney(due)}</span></div>
-        </div>
+        ${totalsHTML}
         ${(s.invoiceTerms && s.invoiceTerms.length) ? `
         <div class="terms">
           <h3>Terms &amp; Conditions</h3>
