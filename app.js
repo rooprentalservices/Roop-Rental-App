@@ -230,7 +230,12 @@ const state = {
   filter: 'active',
   invoiceFilter: 'due',
   sort: 'newest',
-  editingId: null
+  editingId: null,
+  reportPeriodType: 'fy', // 'fy' | 'calendar' | 'custom'
+  reportFY: null,         // e.g. 2026 means FY 2026-27 (01 Apr 2026 - 31 Mar 2027); null = current FY
+  reportCalendarYear: null, // e.g. 2026; null = current calendar year
+  reportFromDate: '',
+  reportToDate: ''
 };
 
 /* ---------- Theme Customization ---------- */
@@ -498,10 +503,137 @@ function computeStats() {
   return { totalActive, todayRentals, pendingDueTotal, pendingDueCount, monthlyRevenue };
 }
 
+/* ---------- Dashboard/Reports professional stats (additive — reuses existing calc functions) ---------- */
+function computeDashboardPro() {
+  const notDeleted = state.rentals.filter(r => !r.deleted && !r.archived);
+  const activeList = notDeleted.filter(r => itemReturnState(r) !== 'returned');
+  const activeCount = activeList.length;
+  const activeValue = activeList.reduce((s, r) => s + rentalGrandTotal(r), 0);
+  const activeDue = activeList.reduce((s, r) => s + rentalDue(r), 0);
+  let itemsOnRent = 0;
+  activeList.forEach(r => (r.items || []).forEach(it => { itemsOnRent += Number(it.qty) || 0; }));
+
+  const invoiced = state.rentals.filter(r => !r.deleted && r.invoiceNumber);
+  const totalInvoices = invoiced.length;
+  const totalInvoiceAmount = invoiced.reduce((s, r) => s + rentalGrandTotal(r), 0);
+  const totalReceived = invoiced.reduce((s, r) => s + rentalPaid(r), 0);
+  const totalDue = invoiced.reduce((s, r) => s + rentalDue(r), 0);
+
+  return { activeCount, activeValue, itemsOnRent, activeDue, totalInvoices, totalInvoiceAmount, totalReceived, totalDue };
+}
+
+// FY 2026 means 01 Apr 2026 -> 31 Mar 2027
+function fyRange(startYear) { return { from: `${startYear}-04-01`, to: `${startYear + 1}-03-31` }; }
+function calendarYearRange(year) { return { from: `${year}-01-01`, to: `${year}-12-31` }; }
+function fyStartYearFor(dateISO) {
+  const d = dateISO ? new Date(dateISO) : new Date();
+  const y = d.getFullYear(), m = d.getMonth() + 1;
+  return m >= 4 ? y : y - 1;
+}
+function availableFYStartYears() {
+  const years = new Set([fyStartYearFor()]);
+  state.rentals.filter(r => !r.deleted && r.date).forEach(r => years.add(fyStartYearFor(r.date)));
+  return Array.from(years).sort((a, b) => b - a);
+}
+function availableCalendarYears() {
+  const years = new Set([new Date().getFullYear()]);
+  state.rentals.filter(r => !r.deleted && r.date).forEach(r => years.add(Number(r.date.slice(0, 4))));
+  return Array.from(years).sort((a, b) => b - a);
+}
+function fyLabel(startYear) { return `FY ${startYear}-${String(startYear + 1).slice(2)}`; }
+
+// Resolves the app's current report filter selection into a concrete { from, to } date range
+function currentReportRange() {
+  if (state.reportPeriodType === 'calendar') return calendarYearRange(state.reportCalendarYear || new Date().getFullYear());
+  if (state.reportPeriodType === 'custom') return { from: state.reportFromDate || '2000-01-01', to: state.reportToDate || todayISO() };
+  return fyRange(state.reportFY != null ? state.reportFY : fyStartYearFor());
+}
+function currentReportRangeLabel() {
+  if (state.reportPeriodType === 'calendar') return String(state.reportCalendarYear || new Date().getFullYear());
+  if (state.reportPeriodType === 'custom') {
+    const { from, to } = currentReportRange();
+    return `${fmtDate(from)} to ${fmtDate(to)}`;
+  }
+  return fyLabel(state.reportFY != null ? state.reportFY : fyStartYearFor());
+}
+
+// True cash-basis collection: sums each individual payment (and the advance, dated to the rental's
+// own start date) that actually falls within the range — independent of when the rental itself started.
+function paymentsCollectedInRange(from, to) {
+  let total = 0;
+  state.rentals.filter(r => !r.deleted).forEach(r => {
+    if (r.date && r.date >= from && r.date <= to) total += Number(r.advanceAmount) || 0;
+    (r.payments || []).forEach(p => { if (p.date && p.date >= from && p.date <= to) total += Number(p.amount) || 0; });
+  });
+  return total;
+}
+
+function computeReportSummary(from, to) {
+  const inRange = state.rentals.filter(r => !r.deleted && r.date && r.date >= from && r.date <= to);
+  const totalRentalEntries = inRange.length;
+  const activeRentals = inRange.filter(r => itemReturnState(r) !== 'returned' && !r.archived).length;
+  const closedRentals = inRange.filter(r => itemReturnState(r) === 'returned').length;
+  let itemsOnRent = 0;
+  inRange.forEach(r => { if (itemReturnState(r) !== 'returned') (r.items || []).forEach(it => { itemsOnRent += Number(it.qty) || 0; }); });
+  const invoicedInRange = inRange.filter(r => r.invoiceNumber);
+  const totalInvoices = invoicedInRange.length;
+  const totalInvoiceAmount = invoicedInRange.reduce((s, r) => s + rentalGrandTotal(r), 0);
+  const totalReceived = paymentsCollectedInRange(from, to);
+  const totalOutstandingDue = inRange.reduce((s, r) => s + rentalDue(r), 0);
+  const totalRentalCharges = inRange.reduce((s, r) => s + rentalItemsTotal(r), 0);
+  const avgInvoiceValue = totalInvoices > 0 ? totalInvoiceAmount / totalInvoices : 0;
+  return { totalRentalEntries, activeRentals, closedRentals, itemsOnRent, totalInvoices, totalInvoiceAmount, totalReceived, totalOutstandingDue, totalRentalCharges, avgInvoiceValue };
+}
+
+// Monthly buckets (Invoice Amount / Collection / Outstanding Due) spanning the selected range,
+// capped at 24 months so an unusually large custom range doesn't produce an unreadable chart.
+function computeReportMonthlyChart(from, to) {
+  const start = new Date(from + 'T00:00:00'), end = new Date(to + 'T00:00:00');
+  const months = [];
+  let cur = new Date(start.getFullYear(), start.getMonth(), 1);
+  while (cur <= end && months.length < 24) {
+    months.push(cur.toISOString().slice(0, 7));
+    cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
+  }
+  const notDeleted = state.rentals.filter(r => !r.deleted);
+  const invoiceAmount = months.map(m => notDeleted.filter(r => r.invoiceNumber && (r.date || '').startsWith(m)).reduce((s, r) => s + rentalGrandTotal(r), 0));
+  const collection = months.map(m => {
+    const mStart = m + '-01';
+    const mEnd = new Date(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0).toISOString().slice(0, 10);
+    return paymentsCollectedInRange(mStart, mEnd);
+  });
+  const outstandingDue = months.map(m => notDeleted.filter(r => (r.date || '').startsWith(m)).reduce((s, r) => s + rentalDue(r), 0));
+  return { months, invoiceAmount, collection, outstandingDue };
+}
+
 function renderDashboard() {
   const s = computeStats();
+  const p = computeDashboardPro();
   const catalog = getItemCatalog();
   return `
+    <div class="pro-card-group">
+      <div class="pro-group-title"><span class="pro-group-icon" style="background:#dbeafe;">🏷️</span>Active Rentals</div>
+      <div class="pro-card-grid">
+        <div class="pro-stat-card blue"><div class="pro-stat-icon">📋</div><div class="pro-stat-body"><div class="pro-stat-val">${p.activeCount}</div><div class="pro-stat-lbl">Active Rentals</div></div></div>
+        <div class="pro-stat-card blue"><div class="pro-stat-icon">💼</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(p.activeValue)}</div><div class="pro-stat-lbl">Active Rental Value</div></div></div>
+      </div>
+    </div>
+    <div class="pro-card-group">
+      <div class="pro-group-title"><span class="pro-group-icon" style="background:#fef3c7;">📦</span>On Rent</div>
+      <div class="pro-card-grid">
+        <div class="pro-stat-card orange"><div class="pro-stat-icon">🔢</div><div class="pro-stat-body"><div class="pro-stat-val">${p.itemsOnRent}</div><div class="pro-stat-lbl">Items Currently On Rent</div></div></div>
+        <div class="pro-stat-card red"><div class="pro-stat-icon">⏳</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(p.activeDue)}</div><div class="pro-stat-lbl">Total Rental Due</div></div></div>
+      </div>
+    </div>
+    <div class="pro-card-group">
+      <div class="pro-group-title"><span class="pro-group-icon" style="background:#ede9fe;">🧾</span>Invoices</div>
+      <div class="pro-card-grid">
+        <div class="pro-stat-card indigo"><div class="pro-stat-icon">🧾</div><div class="pro-stat-body"><div class="pro-stat-val">${p.totalInvoices}</div><div class="pro-stat-lbl">Total Invoices</div></div></div>
+        <div class="pro-stat-card orange"><div class="pro-stat-icon">💰</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(p.totalInvoiceAmount)}</div><div class="pro-stat-lbl">Total Invoice Amount</div></div></div>
+        <div class="pro-stat-card green"><div class="pro-stat-icon">✅</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(p.totalReceived)}</div><div class="pro-stat-lbl">Amount Received</div></div></div>
+        <div class="pro-stat-card red"><div class="pro-stat-icon">⚠️</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(p.totalDue)}</div><div class="pro-stat-lbl">Amount Due</div></div></div>
+      </div>
+    </div>
     <div class="stat-grid">
       <div class="stat-card accent"><div class="num">${s.totalActive}</div><div class="lbl">Active Rentals</div></div>
       <div class="stat-card"><div class="num">${s.todayRentals}</div><div class="lbl">Today's Rentals</div></div>
@@ -933,25 +1065,116 @@ function renderInvoices() {
   `;
 }
 
+function fmtMoneyShort(v) {
+  v = Number(v) || 0;
+  return v >= 1000 ? Math.round(v / 1000) + 'k' : (v > 0 ? String(Math.round(v)) : '');
+}
+
+function renderReportChart(title, months, data, gradient) {
+  const max = Math.max(...data, 1);
+  return `
+  <div class="section-title">${title}</div>
+  <div class="card">
+    <div class="chart-row">
+      ${data.map((v, i) => `
+        <div class="chart-col">
+          <div class="chart-val">${fmtMoneyShort(v)}</div>
+          <div class="chart-bar" style="height:${Math.max((v / max) * 90, 2)}px;background:${gradient};"></div>
+          <div class="chart-month">${months[i].slice(5)}/${months[i].slice(2, 4)}</div>
+        </div>`).join('')}
+    </div>
+  </div>`;
+}
+
 function renderReports() {
+  const range = currentReportRange();
+  const summary = computeReportSummary(range.from, range.to);
+  const chart = computeReportMonthlyChart(range.from, range.to);
+  const fyYears = availableFYStartYears();
+  const calYears = availableCalendarYears();
+  const curFY = state.reportFY != null ? state.reportFY : fyStartYearFor();
+  const curCal = state.reportCalendarYear != null ? state.reportCalendarYear : new Date().getFullYear();
+
+  // ---- old all-time stats (unchanged, kept as-is below the new filtered report) ----
   const active = state.rentals.filter(r => !r.deleted);
   const totalRentals = active.length;
   const totalBilled = active.reduce((s, r) => s + rentalGrandTotal(r), 0);
   const totalReceived = active.reduce((s, r) => s + rentalPaid(r), 0);
   const totalDue = active.reduce((s, r) => s + rentalDue(r), 0);
-
-  // monthly revenue last 6 months
-  const months = [];
+  const months6 = [];
   const now = new Date();
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    months.push(d.toISOString().slice(0, 7));
-  }
-  const monthlyData = months.map(m => active.filter(r => (r.date || '').startsWith(m)).reduce((s, r) => s + rentalRevenueCollected(r), 0));
+  for (let i = 5; i >= 0; i--) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); months6.push(d.toISOString().slice(0, 7)); }
+  const monthlyData = months6.map(m => active.filter(r => (r.date || '').startsWith(m)).reduce((s, r) => s + rentalRevenueCollected(r), 0));
   const maxMonth = Math.max(...monthlyData, 1);
 
   return `
     <div class="page-header"><h2>Reports</h2></div>
+
+    <div class="card report-filter-card">
+      <div class="section-title" style="margin-top:0;">Report Period</div>
+      <div class="report-period-tabs">
+        <button type="button" class="rpt-tab ${state.reportPeriodType === 'fy' ? 'active' : ''}" data-rpt-type="fy">Financial Year</button>
+        <button type="button" class="rpt-tab ${state.reportPeriodType === 'calendar' ? 'active' : ''}" data-rpt-type="calendar">Calendar Year</button>
+        <button type="button" class="rpt-tab ${state.reportPeriodType === 'custom' ? 'active' : ''}" data-rpt-type="custom">Custom Range</button>
+      </div>
+      ${state.reportPeriodType === 'fy' ? `
+      <select id="rptFYSelect" class="rpt-select">
+        ${fyYears.map(y => `<option value="${y}" ${curFY === y ? 'selected' : ''}>${fyLabel(y)}</option>`).join('')}
+      </select>` : ''}
+      ${state.reportPeriodType === 'calendar' ? `
+      <select id="rptCalSelect" class="rpt-select">
+        ${calYears.map(y => `<option value="${y}" ${curCal === y ? 'selected' : ''}>${y}</option>`).join('')}
+      </select>` : ''}
+      ${state.reportPeriodType === 'custom' ? `
+      <div class="rpt-range-row">
+        <div><label>From</label><input type="date" id="rptFromDate" value="${state.reportFromDate || ''}"></div>
+        <div><label>To</label><input type="date" id="rptToDate" value="${state.reportToDate || ''}"></div>
+      </div>` : ''}
+      <div style="font-size:11.5px;color:var(--text-soft);margin-top:9px;">Showing: <b>${escapeHtml(currentReportRangeLabel())}</b></div>
+    </div>
+
+    <div class="pro-card-group">
+      <div class="pro-group-title"><span class="pro-group-icon" style="background:#dbeafe;">📋</span>Rentals</div>
+      <div class="pro-card-grid">
+        <div class="pro-stat-card blue"><div class="pro-stat-icon">📋</div><div class="pro-stat-body"><div class="pro-stat-val">${summary.totalRentalEntries}</div><div class="pro-stat-lbl">Total Rental Entries</div></div></div>
+        <div class="pro-stat-card blue"><div class="pro-stat-icon">🟢</div><div class="pro-stat-body"><div class="pro-stat-val">${summary.activeRentals}</div><div class="pro-stat-lbl">Active Rentals</div></div></div>
+        <div class="pro-stat-card indigo"><div class="pro-stat-icon">✔️</div><div class="pro-stat-body"><div class="pro-stat-val">${summary.closedRentals}</div><div class="pro-stat-lbl">Closed Rentals</div></div></div>
+        <div class="pro-stat-card orange"><div class="pro-stat-icon">🔢</div><div class="pro-stat-body"><div class="pro-stat-val">${summary.itemsOnRent}</div><div class="pro-stat-lbl">Items Currently On Rent</div></div></div>
+      </div>
+    </div>
+
+    <div class="pro-card-group">
+      <div class="pro-group-title"><span class="pro-group-icon" style="background:#ede9fe;">🧾</span>Invoices &amp; Payments</div>
+      <div class="pro-card-grid">
+        <div class="pro-stat-card indigo"><div class="pro-stat-icon">🧾</div><div class="pro-stat-body"><div class="pro-stat-val">${summary.totalInvoices}</div><div class="pro-stat-lbl">Total Invoices</div></div></div>
+        <div class="pro-stat-card orange"><div class="pro-stat-icon">💰</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(summary.totalInvoiceAmount)}</div><div class="pro-stat-lbl">Total Invoice Amount</div></div></div>
+        <div class="pro-stat-card green"><div class="pro-stat-icon">✅</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(summary.totalReceived)}</div><div class="pro-stat-lbl">Amount Received</div></div></div>
+        <div class="pro-stat-card red"><div class="pro-stat-icon">⚠️</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(summary.totalOutstandingDue)}</div><div class="pro-stat-lbl">Outstanding Due</div></div></div>
+      </div>
+    </div>
+
+    <div class="pro-card-group">
+      <div class="pro-group-title"><span class="pro-group-icon" style="background:#dcfce7;">📈</span>Rental Income</div>
+      <div class="pro-card-grid">
+        <div class="pro-stat-card green"><div class="pro-stat-icon">💵</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(summary.totalRentalCharges)}</div><div class="pro-stat-lbl">Total Rental Charges</div></div></div>
+        <div class="pro-stat-card blue"><div class="pro-stat-icon">📊</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(summary.avgInvoiceValue)}</div><div class="pro-stat-lbl">Average Invoice Value</div></div></div>
+      </div>
+    </div>
+
+    <div class="section-title">Export</div>
+    <div class="card">
+      <div class="btn-row">
+        <button class="btn btn-primary" id="rptPdfBtn">⬇ Download PDF</button>
+        <button class="btn btn-outline" id="rptExcelBtn">📊 Export Excel</button>
+        <button class="btn btn-outline" id="rptPrintBtn">🖨 Print Report</button>
+      </div>
+    </div>
+
+    ${renderReportChart('Monthly Invoice Amount', chart.months, chart.invoiceAmount, 'linear-gradient(180deg,#818cf8,#4f46e5)')}
+    ${renderReportChart('Monthly Collection', chart.months, chart.collection, 'linear-gradient(180deg,#4ade80,#16a34a)')}
+    ${renderReportChart('Monthly Outstanding Due', chart.months, chart.outstandingDue, 'linear-gradient(180deg,#f87171,#dc2626)')}
+
+    <div class="section-title">All-Time Overview</div>
     <div class="stat-grid">
       <div class="stat-card" style="background:linear-gradient(135deg,#e0e7ff,#c7d2fe);"><div class="num" style="color:var(--indigo-900)">${totalRentals}</div><div class="lbl">Total Rentals</div></div>
       <div class="stat-card" style="background:linear-gradient(135deg,#fef3c7,#fde68a);"><div class="num" style="color:#92400e">${fmtMoney(totalBilled)}</div><div class="lbl">Total Billed</div></div>
@@ -964,9 +1187,9 @@ function renderReports() {
       <div style="display:flex;align-items:flex-end;gap:8px;height:120px;">
         ${monthlyData.map((v, i) => `
           <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;">
-            <div style="font-size:9px;color:var(--text-soft);margin-bottom:3px;">${v > 0 ? Math.round(v/1000)+'k' : ''}</div>
-            <div style="width:100%;background:linear-gradient(180deg,var(--amber),#ea7c1f);border-radius:6px 6px 0 0;height:${Math.max((v/maxMonth)*90,2)}px;"></div>
-            <div style="font-size:9px;color:var(--text-soft);margin-top:4px;">${months[i].slice(5)}/${months[i].slice(2,4)}</div>
+            <div style="font-size:9px;color:var(--text-soft);margin-bottom:3px;">${v > 0 ? Math.round(v / 1000) + 'k' : ''}</div>
+            <div style="width:100%;background:linear-gradient(180deg,var(--amber),#ea7c1f);border-radius:6px 6px 0 0;height:${Math.max((v / maxMonth) * 90, 2)}px;"></div>
+            <div style="font-size:9px;color:var(--text-soft);margin-top:4px;">${months6[i].slice(5)}/${months6[i].slice(2, 4)}</div>
           </div>`).join('')}
       </div>
     </div>
@@ -2317,6 +2540,109 @@ function bindRentalDetailEvents(r) {
 }
 
 /* ---------- Invoice Print ---------- */
+/* ---------- Reports: Print / PDF / Excel export ---------- */
+function openReportPrint() {
+  const s = state.settings;
+  const range = currentReportRange();
+  const summary = computeReportSummary(range.from, range.to);
+  const periodLabel = currentReportRangeLabel();
+  const w = window.open('', '_blank');
+  const section = (title, items) => `
+    <div class="rpt-section">
+      <h3>${escapeHtml(title)}</h3>
+      <table>${items.map(([label, val]) => `<tr><td>${escapeHtml(label)}</td><td>${val}</td></tr>`).join('')}</table>
+    </div>`;
+  w.document.write(`
+    <html><head><title>Report ${escapeHtml(periodLabel)}</title>
+    <style>
+      * { box-sizing: border-box; }
+      @page { size: A4 portrait; margin: 14mm 12mm; }
+      body{font-family:'Segoe UI',Arial,sans-serif;color:#161b33;margin:0;padding:0;background:#fff;}
+      .head{background:#161b33;color:#fff;padding:22px 28px;}
+      .head h1{margin:0;font-size:20px;}
+      .head .sub{font-size:12px;opacity:.85;margin-top:5px;}
+      .body{padding:22px 28px;}
+      .rpt-section{margin-bottom:18px;page-break-inside:avoid;}
+      .rpt-section h3{font-size:13px;margin:0 0 7px;color:#161b33;border-bottom:2px solid #e4e6f2;padding-bottom:5px;}
+      table{width:100%;border-collapse:collapse;font-size:12.5px;}
+      td{padding:6px 4px;border-bottom:1px solid #f0f0f5;}
+      td:last-child{text-align:right;font-weight:700;}
+    </style></head><body>
+    <div class="head">
+      <h1>${escapeHtml(s.businessName)}</h1>
+      <div class="sub">Report Period: ${escapeHtml(periodLabel)} &nbsp;·&nbsp; Generated: ${fmtDate(todayISO())}</div>
+    </div>
+    <div class="body">
+      ${section('Rentals', [['Total Rental Entries', summary.totalRentalEntries], ['Active Rentals', summary.activeRentals], ['Closed Rentals', summary.closedRentals]])}
+      ${section('Items', [['Items Currently On Rent', summary.itemsOnRent]])}
+      ${section('Invoices', [['Total Number of Invoices', summary.totalInvoices], ['Total Invoice Amount', fmtMoney(summary.totalInvoiceAmount)]])}
+      ${section('Payments', [['Total Amount Received', fmtMoney(summary.totalReceived)], ['Total Outstanding Due', fmtMoney(summary.totalOutstandingDue)]])}
+      ${section('Rental Income', [['Total Rental Charges', fmtMoney(summary.totalRentalCharges)], ['Average Invoice Value', fmtMoney(summary.avgInvoiceValue)]])}
+    </div>
+    <script>window.onload = () => window.print();<\/script>
+    </body></html>
+  `);
+  w.document.close();
+}
+
+function exportReportExcel() {
+  if (typeof XLSX === 'undefined') { toast('Excel export library failed to load — check your internet connection.'); return; }
+  const s = state.settings;
+  const range = currentReportRange();
+  const summary = computeReportSummary(range.from, range.to);
+  const periodLabel = currentReportRangeLabel();
+  const rows = [
+    [s.businessName],
+    ['Report Period', periodLabel],
+    ['Generated On', fmtDate(todayISO())],
+    [],
+    ['Rentals'],
+    ['Total Rental Entries', summary.totalRentalEntries],
+    ['Active Rentals', summary.activeRentals],
+    ['Closed Rentals', summary.closedRentals],
+    [],
+    ['Items'],
+    ['Items Currently On Rent', summary.itemsOnRent],
+    [],
+    ['Invoices'],
+    ['Total Number of Invoices', summary.totalInvoices],
+    ['Total Invoice Amount', summary.totalInvoiceAmount],
+    [],
+    ['Payments'],
+    ['Total Amount Received', summary.totalReceived],
+    ['Total Outstanding Due', summary.totalOutstandingDue],
+    [],
+    ['Rental Income'],
+    ['Total Rental Charges', summary.totalRentalCharges],
+    ['Average Invoice Value', Math.round(summary.avgInvoiceValue)]
+  ];
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [{ wch: 28 }, { wch: 20 }];
+  XLSX.utils.book_append_sheet(wb, ws, 'Report Summary');
+  XLSX.writeFile(wb, `Report ${periodLabel.replace(/[\/\\:]/g, '-')}.xlsx`);
+}
+
+function bindReportsEvents() {
+  document.querySelectorAll('.rpt-tab').forEach(btn => {
+    btn.onclick = () => { state.reportPeriodType = btn.dataset.rptType; route(); };
+  });
+  const fySel = document.getElementById('rptFYSelect');
+  if (fySel) fySel.onchange = () => { state.reportFY = Number(fySel.value); route(); };
+  const calSel = document.getElementById('rptCalSelect');
+  if (calSel) calSel.onchange = () => { state.reportCalendarYear = Number(calSel.value); route(); };
+  const fromInp = document.getElementById('rptFromDate');
+  if (fromInp) fromInp.onchange = () => { state.reportFromDate = fromInp.value; route(); };
+  const toInp = document.getElementById('rptToDate');
+  if (toInp) toInp.onchange = () => { state.reportToDate = toInp.value; route(); };
+  const pdfBtn = document.getElementById('rptPdfBtn');
+  if (pdfBtn) pdfBtn.onclick = openReportPrint;
+  const printBtn = document.getElementById('rptPrintBtn');
+  if (printBtn) printBtn.onclick = openReportPrint;
+  const excelBtn = document.getElementById('rptExcelBtn');
+  if (excelBtn) excelBtn.onclick = exportReportExcel;
+}
+
 function openInvoicePrint(r) {
   const s = state.settings;
   const tc = s.themeConfig;
@@ -3174,6 +3500,7 @@ function route() {
   bindMainEvents();
   if (state.view === 'dashboard' && detailStack.view !== 'customerDetail') bindStockRows();
   if (state.view === 'settings' && detailStack.view !== 'customerDetail') bindSettingsEvents();
+  if (state.view === 'reports' && detailStack.view !== 'customerDetail') bindReportsEvents();
   if (detailStack.view === 'customerDetail') {
     const editBtn = document.getElementById('editCustomerBtn');
     if (editBtn) editBtn.onclick = () => openCustomerForm(detailStack.id);

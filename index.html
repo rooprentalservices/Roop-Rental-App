@@ -63,6 +63,46 @@
   .stat-card.accent{background:linear-gradient(135deg,var(--amber),var(--amber-light,var(--amber)));color:#2b1400;border:none;box-shadow:0 6px 16px rgba(245,158,11,.3);}
   .stat-card.accent .lbl{color:#5a3200;}
 
+  /* Professional card groups (Dashboard + Reports) */
+  @keyframes proFadeUp{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
+  .pro-card-group{margin-bottom:16px;}
+  .pro-group-title{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:700;margin-bottom:8px;}
+  .pro-group-icon{width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;}
+  .pro-card-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;}
+  .pro-stat-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:12px;display:flex;align-items:center;gap:10px;animation:proFadeUp .25s ease both;transition:transform .15s ease;}
+  .pro-stat-card:active{transform:scale(.97);}
+  .pro-stat-icon{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;}
+  .pro-stat-val{font-size:16px;font-weight:800;line-height:1.2;}
+  .pro-stat-lbl{font-size:10.5px;color:var(--text-soft);margin-top:2px;line-height:1.3;}
+  .pro-stat-card.blue .pro-stat-icon{background:#dbeafe;}
+  .pro-stat-card.blue .pro-stat-val{color:#1d4ed8;}
+  .pro-stat-card.green .pro-stat-icon{background:#dcfce7;}
+  .pro-stat-card.green .pro-stat-val{color:#15803d;}
+  .pro-stat-card.orange .pro-stat-icon{background:#fef3c7;}
+  .pro-stat-card.orange .pro-stat-val{color:#b45309;}
+  .pro-stat-card.red .pro-stat-icon{background:#fee2e2;}
+  .pro-stat-card.red .pro-stat-val{color:#b91c1c;}
+  .pro-stat-card.indigo .pro-stat-icon{background:#ede9fe;}
+  .pro-stat-card.indigo .pro-stat-val{color:#5b21b6;}
+
+  /* Reports: period filter */
+  .report-filter-card{margin-bottom:16px;}
+  .report-period-tabs{display:flex;gap:6px;background:var(--bg);border-radius:10px;padding:4px;}
+  .rpt-tab{flex:1;border:none;background:transparent;padding:8px 6px;border-radius:8px;font-size:11.5px;font-weight:700;color:var(--text-soft);cursor:pointer;}
+  .rpt-tab.active{background:var(--card);color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.12);}
+  .rpt-select{width:100%;margin-top:10px;padding:10px;border-radius:9px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:13px;}
+  .rpt-range-row{display:flex;gap:10px;margin-top:10px;}
+  .rpt-range-row > div{flex:1;}
+  .rpt-range-row label{display:block;font-size:10.5px;color:var(--text-soft);margin-bottom:3px;font-weight:700;text-transform:uppercase;}
+  .rpt-range-row input{width:100%;padding:9px;border-radius:9px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:13px;}
+
+  /* Reports: charts */
+  .chart-row{display:flex;align-items:flex-end;gap:6px;height:130px;overflow-x:auto;}
+  .chart-col{flex:1;min-width:22px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;}
+  .chart-val{font-size:8.5px;color:var(--text-soft);margin-bottom:3px;white-space:nowrap;}
+  .chart-bar{width:100%;border-radius:6px 6px 0 0;}
+  .chart-month{font-size:8.5px;color:var(--text-soft);margin-top:4px;white-space:nowrap;}
+
   .section-title{font-size:14px;font-weight:700;margin:18px 2px 8px;display:flex;justify-content:space-between;align-items:center;padding-left:10px;position:relative;}
   .section-title::before{content:'';position:absolute;left:0;top:1px;bottom:1px;width:4px;border-radius:4px;background:linear-gradient(180deg,var(--amber),var(--indigo-800));}
   .section-title a{font-size:12px;color:var(--amber-dark);font-weight:600;}
@@ -290,6 +330,7 @@
   window.addEventListener('unhandledrejection', function(e){ showErr('Promise error: ' + (e.reason && e.reason.message ? e.reason.message : e.reason)); });
 </script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="./app.js" onerror="showErr('app.js failed to load — check the file was uploaded and the path/case matches exactly.')"></script>
 </body>
 </html>
