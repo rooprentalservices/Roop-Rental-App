@@ -1698,18 +1698,24 @@ function rentalFormHTML() {
   </div>
   <div class="field"><label>Vehicle Number</label><input id="f_vehicleNumber" value="${escapeHtml(r.vehicleNumber || '')}" placeholder="e.g. GJ01AB1234"></div>
 
-  <div class="transport-charge-line">
-    <div class="field transport-charge-input"><label>Transportation Charge — Delivery</label><input id="f_transportChargeDelivery" type="number" value="${r.transportChargeDelivery || 0}"></div>
-    <label class="show-invoice-inline"><input type="checkbox" id="f_transportDeliveryShowInvoice" ${r.transportDeliveryShowInvoice ? 'checked' : ''}> Show in Invoice</label>
+  <div class="field">
+    <div class="transport-charge-line">
+      <label>Transportation Charge — Delivery</label>
+      <label class="show-invoice-inline"><input type="checkbox" id="f_transportDeliveryShowInvoice" ${r.transportDeliveryShowInvoice ? 'checked' : ''}> Show in Invoice</label>
+    </div>
+    <input id="f_transportChargeDelivery" type="number" value="${r.transportChargeDelivery || 0}">
   </div>
   <div class="chip-row" id="deliveryPaidByChips">
     <div class="chip ${r.transportDeliveryPaidBy === 'me' ? 'active' : ''}" data-paidby-group="delivery" data-paidby-val="me">Paid by Me</div>
     <div class="chip ${r.transportDeliveryPaidBy !== 'me' ? 'active' : ''}" data-paidby-group="delivery" data-paidby-val="party">Paid by Party</div>
   </div>
 
-  <div class="transport-charge-line">
-    <div class="field transport-charge-input"><label>Transportation Charge — Pickup</label><input id="f_transportChargePickup" type="number" value="${r.transportChargePickup || 0}"></div>
-    <label class="show-invoice-inline"><input type="checkbox" id="f_transportPickupShowInvoice" ${r.transportPickupShowInvoice ? 'checked' : ''}> Show in Invoice</label>
+  <div class="field">
+    <div class="transport-charge-line">
+      <label>Transportation Charge — Pickup</label>
+      <label class="show-invoice-inline"><input type="checkbox" id="f_transportPickupShowInvoice" ${r.transportPickupShowInvoice ? 'checked' : ''}> Show in Invoice</label>
+    </div>
+    <input id="f_transportChargePickup" type="number" value="${r.transportChargePickup || 0}">
   </div>
   <div class="chip-row" id="pickupPaidByChips">
     <div class="chip ${r.transportPickupPaidBy === 'me' ? 'active' : ''}" data-paidby-group="pickup" data-paidby-val="me">Paid by Me</div>
