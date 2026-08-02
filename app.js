@@ -1698,26 +1698,24 @@ function rentalFormHTML() {
   </div>
   <div class="field"><label>Vehicle Number</label><input id="f_vehicleNumber" value="${escapeHtml(r.vehicleNumber || '')}" placeholder="e.g. GJ01AB1234"></div>
 
-  <div class="field"><label>Transportation Charge — Delivery</label><input id="f_transportChargeDelivery" type="number" value="${r.transportChargeDelivery || 0}"></div>
+  <div class="transport-charge-line">
+    <div class="field transport-charge-input"><label>Transportation Charge — Delivery</label><input id="f_transportChargeDelivery" type="number" value="${r.transportChargeDelivery || 0}"></div>
+    <label class="show-invoice-inline"><input type="checkbox" id="f_transportDeliveryShowInvoice" ${r.transportDeliveryShowInvoice ? 'checked' : ''}> Show in Invoice</label>
+  </div>
   <div class="chip-row" id="deliveryPaidByChips">
     <div class="chip ${r.transportDeliveryPaidBy === 'me' ? 'active' : ''}" data-paidby-group="delivery" data-paidby-val="me">Paid by Me</div>
     <div class="chip ${r.transportDeliveryPaidBy !== 'me' ? 'active' : ''}" data-paidby-group="delivery" data-paidby-val="party">Paid by Party</div>
   </div>
-  <div class="field" style="display:flex;justify-content:space-between;align-items:center;margin-top:-6px;">
-    <label style="margin:0;">Show in Invoice</label>
-    <input type="checkbox" id="f_transportDeliveryShowInvoice" ${r.transportDeliveryShowInvoice ? 'checked' : ''} style="width:20px;height:20px;">
-  </div>
 
-  <div class="field"><label>Transportation Charge — Pickup</label><input id="f_transportChargePickup" type="number" value="${r.transportChargePickup || 0}"></div>
+  <div class="transport-charge-line">
+    <div class="field transport-charge-input"><label>Transportation Charge — Pickup</label><input id="f_transportChargePickup" type="number" value="${r.transportChargePickup || 0}"></div>
+    <label class="show-invoice-inline"><input type="checkbox" id="f_transportPickupShowInvoice" ${r.transportPickupShowInvoice ? 'checked' : ''}> Show in Invoice</label>
+  </div>
   <div class="chip-row" id="pickupPaidByChips">
     <div class="chip ${r.transportPickupPaidBy === 'me' ? 'active' : ''}" data-paidby-group="pickup" data-paidby-val="me">Paid by Me</div>
     <div class="chip ${r.transportPickupPaidBy !== 'me' ? 'active' : ''}" data-paidby-group="pickup" data-paidby-val="party">Paid by Party</div>
   </div>
-  <div class="field" style="display:flex;justify-content:space-between;align-items:center;margin-top:-6px;">
-    <label style="margin:0;">Show in Invoice</label>
-    <input type="checkbox" id="f_transportPickupShowInvoice" ${r.transportPickupShowInvoice ? 'checked' : ''} style="width:20px;height:20px;">
-  </div>
-  <div style="font-size:11.5px;color:var(--text-soft);margin:-4px 0 12px;">Tick "Show in Invoice" to display a charge on the invoice and include it in the invoice total &amp; due amount. "Paid by Me/Party" is just a record of who paid the transporter.</div>
+  <div style="font-size:11.5px;color:var(--text-soft);margin:6px 0 12px;">Tick "Show in Invoice" to display a charge on the invoice and include it in the invoice total &amp; due amount. "Paid by Me/Party" is just a record of who paid the transporter.</div>
 
   <div class="section-title">Rental Date &amp; Time</div>
   <div class="field-row">
