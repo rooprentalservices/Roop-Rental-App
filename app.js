@@ -2718,8 +2718,6 @@ function openInvoicePrint(r) {
   const pickupBilled = transportBilledPickup(r);
   const showDelivery = deliveryBilled > 0;
   const showPickup = pickupBilled > 0;
-  const deliveryPaidByLabel = r.transportDeliveryPaidBy === 'me' ? 'Paid by Me' : 'Paid by Party';
-  const pickupPaidByLabel = r.transportPickupPaidBy === 'me' ? 'Paid by Me' : 'Paid by Party';
   const discount = Number(r.discount) || 0;
   const oldDues = Number(r.oldDues) || 0;
   const refund = Number(r.refundAmount) || 0;
@@ -2738,8 +2736,8 @@ function openInvoicePrint(r) {
       <div class="trow"><span>Rental Charges</span><span>${fmtMoney(rentalCharges)}</span></div>
       ${(showDelivery || showPickup) ? `
       <div class="trow section-label"><span>Transportation</span><span></span></div>
-      ${showDelivery ? `<div class="trow sub"><span>Delivery (${deliveryPaidByLabel})</span><span>${fmtMoney(deliveryBilled)}</span></div>` : ''}
-      ${showPickup ? `<div class="trow sub"><span>Pickup (${pickupPaidByLabel})</span><span>${fmtMoney(pickupBilled)}</span></div>` : ''}
+      ${showDelivery ? `<div class="trow sub"><span>Delivery</span><span>${fmtMoney(deliveryBilled)}</span></div>` : ''}
+      ${showPickup ? `<div class="trow sub"><span>Pickup</span><span>${fmtMoney(pickupBilled)}</span></div>` : ''}
       ` : ''}
       <div class="trow"><span>Discount</span><span>${discount > 0 ? '-' + fmtMoney(discount) : fmtMoney(0)}</span></div>
       ${oldDues > 0 ? `<div class="trow"><span>Old Dues Carried Forward</span><span>${fmtMoney(oldDues)}</span></div>` : ''}
