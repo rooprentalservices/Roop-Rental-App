@@ -1608,8 +1608,8 @@ function newBlankRental() {
     date: todayISO(), time: '10:00',
     customerName: '', customerInvoiceName: '', customerMobile: '', altMobile: '', customerAddress: '', deliveryAddress: '',
     transportMode: '', transporterName: '', transporterMobile: '', vehicleNumber: '',
-    transportChargeDelivery: 0, transportDeliveryPaidBy: 'party',
-    transportChargePickup: 0, transportPickupPaidBy: 'party',
+    transportChargeDelivery: 0, transportDeliveryPaidBy: 'party', transportDeliveryShowInvoice: false,
+    transportChargePickup: 0, transportPickupPaidBy: 'party', transportPickupShowInvoice: false,
     items: [],
     advanceAmount: 0, advanceMode: 'Cash', advanceDate: todayISO(), refundAmount: 0, oldDues: 0, discount: 0, notes: '',
     actualReturnDate: '', actualReturnTime: '22:00',
@@ -1704,11 +1704,19 @@ function rentalFormHTML() {
     <div class="chip ${r.transportDeliveryPaidBy === 'me' ? 'active' : ''}" data-paidby-group="delivery" data-paidby-val="me">Paid by Me</div>
     <div class="chip ${r.transportDeliveryPaidBy !== 'me' ? 'active' : ''}" data-paidby-group="delivery" data-paidby-val="party">Paid by Party</div>
   </div>
+  <div class="field" style="display:flex;justify-content:space-between;align-items:center;margin-top:-6px;">
+    <label style="margin:0;">Show in Invoice</label>
+    <input type="checkbox" id="f_transportDeliveryShowInvoice" ${r.transportDeliveryShowInvoice ? 'checked' : ''} style="width:20px;height:20px;">
+  </div>
 
   <div class="field"><label>Transportation Charge — Pickup</label><input id="f_transportChargePickup" type="number" value="${r.transportChargePickup || 0}"></div>
   <div class="chip-row" id="pickupPaidByChips">
     <div class="chip ${r.transportPickupPaidBy === 'me' ? 'active' : ''}" data-paidby-group="pickup" data-paidby-val="me">Paid by Me</div>
     <div class="chip ${r.transportPickupPaidBy !== 'me' ? 'active' : ''}" data-paidby-group="pickup" data-paidby-val="party">Paid by Party</div>
+  </div>
+  <div class="field" style="display:flex;justify-content:space-between;align-items:center;margin-top:-6px;">
+    <label style="margin:0;">Show in Invoice</label>
+    <input type="checkbox" id="f_transportPickupShowInvoice" ${r.transportPickupShowInvoice ? 'checked' : ''} style="width:20px;height:20px;">
   </div>
   <div style="font-size:11.5px;color:var(--text-soft);margin:-4px 0 12px;">"Paid by Me" charges are added to the customer's bill automatically. "Paid by Party" is just for your record and isn't billed.</div>
 
@@ -1954,6 +1962,13 @@ function bindRentalFormEvents() {
       document.querySelectorAll(`[data-paidby-group="${group}"]`).forEach(c => c.classList.toggle('active', c.dataset.paidbyVal === val));
       refreshFormTotals();
     });
+  });
+
+  document.getElementById('f_transportDeliveryShowInvoice').addEventListener('change', (e) => {
+    formDraft.transportDeliveryShowInvoice = e.target.checked;
+  });
+  document.getElementById('f_transportPickupShowInvoice').addEventListener('change', (e) => {
+    formDraft.transportPickupShowInvoice = e.target.checked;
   });
 
   // customer autofill
@@ -2698,7 +2713,10 @@ function openInvoicePrint(r) {
   const rentalCharges = rentalItemsTotal(r);
   const deliveryBilled = transportBilledDelivery(r);
   const pickupBilled = transportBilledPickup(r);
-  const transportTotal = deliveryBilled + pickupBilled;
+  // "Show in Invoice" only controls whether the line item is DISPLAYED — the charge is still
+  // part of Rental Total/Balance Due below either way (nothing about the actual math changes).
+  const showDelivery = !!r.transportDeliveryShowInvoice && deliveryBilled > 0;
+  const showPickup = !!r.transportPickupShowInvoice && pickupBilled > 0;
   const discount = Number(r.discount) || 0;
   const oldDues = Number(r.oldDues) || 0;
   const refund = Number(r.refundAmount) || 0;
@@ -2715,10 +2733,10 @@ function openInvoicePrint(r) {
   const totalsHTML = `
     <div class="totals">
       <div class="trow"><span>Rental Charges</span><span>${fmtMoney(rentalCharges)}</span></div>
-      ${transportTotal > 0 ? `
+      ${(showDelivery || showPickup) ? `
       <div class="trow section-label"><span>Transportation Charges</span><span></span></div>
-      ${deliveryBilled > 0 ? `<div class="trow sub"><span>Delivery</span><span>${fmtMoney(deliveryBilled)}</span></div>` : ''}
-      ${pickupBilled > 0 ? `<div class="trow sub"><span>Pickup</span><span>${fmtMoney(pickupBilled)}</span></div>` : ''}
+      ${showDelivery ? `<div class="trow sub"><span>Delivery</span><span>${fmtMoney(deliveryBilled)}</span></div>` : ''}
+      ${showPickup ? `<div class="trow sub"><span>Pickup</span><span>${fmtMoney(pickupBilled)}</span></div>` : ''}
       ` : ''}
       <div class="trow"><span>Discount</span><span>${discount > 0 ? '-' + fmtMoney(discount) : fmtMoney(0)}</span></div>
       ${oldDues > 0 ? `<div class="trow"><span>Old Dues Carried Forward</span><span>${fmtMoney(oldDues)}</span></div>` : ''}
