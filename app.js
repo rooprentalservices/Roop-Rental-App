@@ -428,6 +428,12 @@ function rentalRevenueCollected(r) {
   // is assumed to cover transport pass-through and old dues, not counted as revenue
   return Math.min(rentalPaid(r), rentalRevenueBase(r));
 }
+// Income-only "due" — (Rental Charges - Discount) - Received Payments, transport excluded entirely.
+// Used ONLY for the Reports income dashboard's Due/Paid classification & totals — customer-facing
+// due amounts elsewhere (rentalDue, invoices, customer balances) are untouched and still include transport.
+function rentalIncomeDue(r) {
+  return Math.max(rentalRevenueBase(r) - rentalPaid(r), 0);
+}
 function itemReturnState(r) {
   if (r.actualReturnDate) return 'returned';
   const items = r.items || [];
@@ -520,6 +526,26 @@ function computeDashboardPro() {
   const totalDue = invoiced.reduce((s, r) => s + rentalDue(r), 0);
 
   return { activeCount, activeValue, itemsOnRent, activeDue, totalInvoices, totalInvoiceAmount, totalReceived, totalDue };
+}
+
+// Reports tab "Income Dashboard" — Not Invoiced / Due Invoices / Paid Invoices, all on an
+// income-only basis (rental charges after discount, transport always excluded).
+function computeIncomeDashboard() {
+  const notDeleted = state.rentals.filter(r => !r.deleted);
+
+  const notInvoiced = notDeleted.filter(r => !r.invoiceNumber);
+  const notInvoicedCount = notInvoiced.length;
+  const notInvoicedDueAmount = notInvoiced.reduce((s, r) => s + rentalIncomeDue(r), 0);
+
+  const invoiced = notDeleted.filter(r => r.invoiceNumber);
+  const dueInvoiceList = invoiced.filter(r => rentalIncomeDue(r) > 0);
+  const paidInvoiceList = invoiced.filter(r => rentalIncomeDue(r) <= 0);
+  const dueInvoicesCount = dueInvoiceList.length;
+  const totalDueAmount = dueInvoiceList.reduce((s, r) => s + rentalIncomeDue(r), 0);
+  const paidInvoicesCount = paidInvoiceList.length;
+  const totalPaidAmount = paidInvoiceList.reduce((s, r) => s + rentalRevenueBase(r), 0);
+
+  return { notInvoicedCount, notInvoicedDueAmount, dueInvoicesCount, totalDueAmount, paidInvoicesCount, totalPaidAmount };
 }
 
 // FY 2026 means 01 Apr 2026 -> 31 Mar 2027
@@ -1106,9 +1132,22 @@ function renderReports() {
   for (let i = 5; i >= 0; i--) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); months6.push(d.toISOString().slice(0, 7)); }
   const monthlyData = months6.map(m => active.filter(r => (r.date || '').startsWith(m)).reduce((s, r) => s + rentalRevenueCollected(r), 0));
   const maxMonth = Math.max(...monthlyData, 1);
+  const inc = computeIncomeDashboard();
 
   return `
     <div class="page-header"><h2>Reports</h2></div>
+
+    <div class="pro-card-group">
+      <div class="pro-group-title"><span class="pro-group-icon" style="background:#e0e7ff;">📊</span>Income Dashboard</div>
+      <div class="pro-card-grid">
+        <div class="pro-stat-card blue"><div class="pro-stat-icon">📦</div><div class="pro-stat-body"><div class="pro-stat-val">${inc.notInvoicedCount}</div><div class="pro-stat-lbl">Not Invoiced Rentals</div></div></div>
+        <div class="pro-stat-card orange"><div class="pro-stat-icon">💰</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(inc.notInvoicedDueAmount)}</div><div class="pro-stat-lbl">Not Invoiced Rentals Due</div></div></div>
+        <div class="pro-stat-card red"><div class="pro-stat-icon">📄</div><div class="pro-stat-body"><div class="pro-stat-val">${inc.dueInvoicesCount}</div><div class="pro-stat-lbl">Due Invoices</div></div></div>
+        <div class="pro-stat-card red"><div class="pro-stat-icon">💵</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(inc.totalDueAmount)}</div><div class="pro-stat-lbl">Total Due Amount</div></div></div>
+        <div class="pro-stat-card green"><div class="pro-stat-icon">✅</div><div class="pro-stat-body"><div class="pro-stat-val">${inc.paidInvoicesCount}</div><div class="pro-stat-lbl">Paid Invoices</div></div></div>
+        <div class="pro-stat-card green"><div class="pro-stat-icon">💳</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(inc.totalPaidAmount)}</div><div class="pro-stat-lbl">Total Paid Amount</div></div></div>
+      </div>
+    </div>
 
     <div class="card report-filter-card">
       <div class="section-title" style="margin-top:0;">Report Period</div>
