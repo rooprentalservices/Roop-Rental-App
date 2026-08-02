@@ -1969,9 +1969,11 @@ function bindRentalFormEvents() {
 
   document.getElementById('f_transportDeliveryShowInvoice').addEventListener('change', (e) => {
     formDraft.transportDeliveryShowInvoice = e.target.checked;
+    refreshFormTotals();
   });
   document.getElementById('f_transportPickupShowInvoice').addEventListener('change', (e) => {
     formDraft.transportPickupShowInvoice = e.target.checked;
+    refreshFormTotals();
   });
 
   // customer autofill
