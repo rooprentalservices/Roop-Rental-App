@@ -1627,18 +1627,17 @@ function ensureInvoiceNumber(r) {
 function blankItem() {
   return { id: uid(), name: '', qty: 1, rentPerDay: 0, returnedQty: 0 };
 }
-function transportBilledTotal(r) {
-  let t = 0;
-  if (r.transportDeliveryPaidBy === 'me') t += Number(r.transportChargeDelivery) || 0;
-  if (r.transportPickupPaidBy === 'me') t += Number(r.transportChargePickup) || 0;
-  return t;
-}
-// Same "billed to customer" logic as transportBilledTotal, broken out per leg for invoice display
+// Billing/invoice-total inclusion is now controlled entirely by "Show in Invoice" — Paid By
+// (me/party) is informational only (who actually paid the transporter), shown on the invoice
+// as a label, but no longer determines whether the charge is billed to the customer.
 function transportBilledDelivery(r) {
-  return r.transportDeliveryPaidBy === 'me' ? (Number(r.transportChargeDelivery) || 0) : 0;
+  return r.transportDeliveryShowInvoice ? (Number(r.transportChargeDelivery) || 0) : 0;
 }
 function transportBilledPickup(r) {
-  return r.transportPickupPaidBy === 'me' ? (Number(r.transportChargePickup) || 0) : 0;
+  return r.transportPickupShowInvoice ? (Number(r.transportChargePickup) || 0) : 0;
+}
+function transportBilledTotal(r) {
+  return transportBilledDelivery(r) + transportBilledPickup(r);
 }
 
 function openRentalForm(existingId) {
@@ -1718,7 +1717,7 @@ function rentalFormHTML() {
     <label style="margin:0;">Show in Invoice</label>
     <input type="checkbox" id="f_transportPickupShowInvoice" ${r.transportPickupShowInvoice ? 'checked' : ''} style="width:20px;height:20px;">
   </div>
-  <div style="font-size:11.5px;color:var(--text-soft);margin:-4px 0 12px;">"Paid by Me" charges are added to the customer's bill automatically. "Paid by Party" is just for your record and isn't billed.</div>
+  <div style="font-size:11.5px;color:var(--text-soft);margin:-4px 0 12px;">Tick "Show in Invoice" to display a charge on the invoice and include it in the invoice total &amp; due amount. "Paid by Me/Party" is just a record of who paid the transporter.</div>
 
   <div class="section-title">Rental Date &amp; Time</div>
   <div class="field-row">
@@ -2711,12 +2710,12 @@ function openInvoicePrint(r) {
   // ---- Financial summary values (all figures reuse the app's existing calculation
   // functions unchanged — this only changes how they're grouped/labeled/displayed) ----
   const rentalCharges = rentalItemsTotal(r);
-  const deliveryBilled = transportBilledDelivery(r);
+  const deliveryBilled = transportBilledDelivery(r); // already 0 unless "Show in Invoice" is checked
   const pickupBilled = transportBilledPickup(r);
-  // "Show in Invoice" only controls whether the line item is DISPLAYED — the charge is still
-  // part of Rental Total/Balance Due below either way (nothing about the actual math changes).
-  const showDelivery = !!r.transportDeliveryShowInvoice && deliveryBilled > 0;
-  const showPickup = !!r.transportPickupShowInvoice && pickupBilled > 0;
+  const showDelivery = deliveryBilled > 0;
+  const showPickup = pickupBilled > 0;
+  const deliveryPaidByLabel = r.transportDeliveryPaidBy === 'me' ? 'Paid by Me' : 'Paid by Party';
+  const pickupPaidByLabel = r.transportPickupPaidBy === 'me' ? 'Paid by Me' : 'Paid by Party';
   const discount = Number(r.discount) || 0;
   const oldDues = Number(r.oldDues) || 0;
   const refund = Number(r.refundAmount) || 0;
@@ -2734,9 +2733,9 @@ function openInvoicePrint(r) {
     <div class="totals">
       <div class="trow"><span>Rental Charges</span><span>${fmtMoney(rentalCharges)}</span></div>
       ${(showDelivery || showPickup) ? `
-      <div class="trow section-label"><span>Transportation Charges</span><span></span></div>
-      ${showDelivery ? `<div class="trow sub"><span>Delivery</span><span>${fmtMoney(deliveryBilled)}</span></div>` : ''}
-      ${showPickup ? `<div class="trow sub"><span>Pickup</span><span>${fmtMoney(pickupBilled)}</span></div>` : ''}
+      <div class="trow section-label"><span>Transportation</span><span></span></div>
+      ${showDelivery ? `<div class="trow sub"><span>Delivery (${deliveryPaidByLabel})</span><span>${fmtMoney(deliveryBilled)}</span></div>` : ''}
+      ${showPickup ? `<div class="trow sub"><span>Pickup (${pickupPaidByLabel})</span><span>${fmtMoney(pickupBilled)}</span></div>` : ''}
       ` : ''}
       <div class="trow"><span>Discount</span><span>${discount > 0 ? '-' + fmtMoney(discount) : fmtMoney(0)}</span></div>
       ${oldDues > 0 ? `<div class="trow"><span>Old Dues Carried Forward</span><span>${fmtMoney(oldDues)}</span></div>` : ''}
