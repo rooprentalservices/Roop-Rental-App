@@ -740,9 +740,9 @@ function rentalCardHTML(r) {
     <div class="meta">
       <span>${r.invoiceNumber ? '#' + escapeHtml(r.invoiceNumber) : 'Not invoiced'}</span>
       <span>📅 ${fmtDate(r.date)}</span>
-      ${r.deliveryAddress ? `<span>📍 ${escapeHtml(truncate(r.deliveryAddress, 28))}</span>` : ''}
       <span class="due-amt ${due <= 0 ? 'clear' : ''}">${due > 0 ? 'Due ' + fmtMoney(due) : 'Cleared'}</span>
     </div>
+    ${r.deliveryAddress ? `<div class="rc-location">📍 ${escapeHtml(r.deliveryAddress)}</div>` : ''}
   </div>`;
 }
 
