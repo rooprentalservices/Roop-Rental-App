@@ -737,12 +737,16 @@ function rentalCardHTML(r) {
       </div>
       <span class="badge ${badge.cls}">${badgeLabel}</span>
     </div>
-    <div class="meta">
-      <span>${r.invoiceNumber ? '#' + escapeHtml(r.invoiceNumber) : 'Not invoiced'}</span>
+    <div class="rc-line3">
+      <span>${r.invoiceNumber ? '#' + escapeHtml(r.invoiceNumber) : 'Not Invoiced'}</span>
       <span>📅 ${fmtDate(r.date)}</span>
-      <span class="due-amt ${due <= 0 ? 'clear' : ''}">${due > 0 ? 'Due ' + fmtMoney(due) : 'Cleared'}</span>
+      <span>${r.deliveryAddress ? '📍 ' + escapeHtml(r.deliveryAddress) : ''}</span>
     </div>
-    ${r.deliveryAddress ? `<div class="rc-location">📍 ${escapeHtml(r.deliveryAddress)}</div>` : ''}
+    <div class="rc-line4">
+      <span>Total: ${fmtMoney(rentalGrandTotal(r))}</span>
+      <span>Paid: ${fmtMoney(rentalPaid(r))}</span>
+      <span class="due-amt ${due <= 0 ? 'clear' : ''}">Due: ${fmtMoney(due)}</span>
+    </div>
   </div>`;
 }
 
