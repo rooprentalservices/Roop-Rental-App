@@ -229,6 +229,7 @@ const state = {
   searchQuery: '',
   filter: 'active',
   invoiceFilter: 'due',
+  invoiceSort: 'numDesc', // 'numDesc' | 'numAsc' | 'dateDesc' | 'dateAsc'
   sort: 'newest',
   editingId: null,
   reportPeriodType: 'fy', // 'fy' | 'calendar' | 'custom'
@@ -1058,6 +1059,11 @@ function bindCustomerFormEvents(existingId) {
 
 
 /* ---------- Invoices (dedicated view) ---------- */
+function invoiceNumValue(r) {
+  const m = String(r.invoiceNumber || '').match(/(\d+)(?!.*\d)/); // trailing number, e.g. "RR-0011" -> 11
+  return m ? parseInt(m[1], 10) : 0;
+}
+
 function renderInvoices() {
   const q = state.searchQuery.trim().toLowerCase();
   let list = state.rentals.filter(r => !r.deleted && r.invoiceNumber);
@@ -1066,9 +1072,21 @@ function renderInvoices() {
   }
   if (state.invoiceFilter === 'paid') list = list.filter(r => rentalDue(r) <= 0);
   else if (state.invoiceFilter === 'due') list = list.filter(r => rentalDue(r) > 0);
-  list.sort((a, b) => b.createdAt - a.createdAt);
+  const invSort = state.invoiceSort || 'numDesc';
+  list.sort((a, b) => {
+    if (invSort === 'numAsc') return invoiceNumValue(a) - invoiceNumValue(b);
+    if (invSort === 'dateDesc') return (b.invoiceDate || b.date || '').localeCompare(a.invoiceDate || a.date || '');
+    if (invSort === 'dateAsc') return (a.invoiceDate || a.date || '').localeCompare(b.invoiceDate || b.date || '');
+    return invoiceNumValue(b) - invoiceNumValue(a); // 'numDesc' default
+  });
   const totalDue = list.reduce((s, r) => s + rentalDue(r), 0);
   const invFilters = [['all', 'All'], ['due', 'Due'], ['paid', 'Paid']];
+  const invSortOptions = [
+    ['numDesc', 'Invoice # — Newest to Oldest'],
+    ['numAsc', 'Invoice # — Oldest to Newest'],
+    ['dateDesc', 'Invoice Date — Newest to Oldest'],
+    ['dateAsc', 'Invoice Date — Oldest to Newest']
+  ];
   return `
     <div class="page-header"><h2>Invoices</h2></div>
     <div class="stat-grid" style="grid-template-columns:1fr 1fr;">
@@ -1078,6 +1096,9 @@ function renderInvoices() {
     <div class="filter-scroll">
       ${invFilters.map(([v, l]) => `<div class="chip ${((state.invoiceFilter || 'all') === v) ? 'active' : ''}" data-invoice-filter="${v}">${l}</div>`).join('')}
     </div>
+    <select id="invoiceSortSelect" class="rpt-select" style="margin-bottom:12px;">
+      ${invSortOptions.map(([v, l]) => `<option value="${v}" ${invSort === v ? 'selected' : ''}>${l}</option>`).join('')}
+    </select>
     ${list.length ? list.map(r => {
       const due = rentalDue(r);
       const names = (r.items || []).map(i => `${i.name} x${i.qty}`).slice(0, 2).join(', ');
@@ -3605,6 +3626,8 @@ function bindMainEvents() {
   });
   const sortSelect = document.getElementById('sortSelect');
   if (sortSelect) sortSelect.addEventListener('change', (e) => { state.sort = e.target.value; route(); });
+  const invoiceSortSelect = document.getElementById('invoiceSortSelect');
+  if (invoiceSortSelect) invoiceSortSelect.addEventListener('change', (e) => { state.invoiceSort = e.target.value; route(); });
 }
 
 /* ---------- Global init ---------- */

@@ -40,12 +40,14 @@
   header.topbar.collapsed{padding:8px 18px 10px;}
   header.topbar.collapsed .row1{display:none;}
   header.topbar.collapsed .search-bar{margin-top:0;}
-  header.topbar .row1{display:flex;align-items:center;justify-content:space-between;}
+  .header-collapse-btn{position:absolute;top:14px;right:18px;z-index:5;}
+  header.topbar.collapsed .header-collapse-btn{top:8px;}
+  header.topbar .row1{display:flex;align-items:center;justify-content:space-between;padding-right:44px;}
   header.topbar h1{font-size:16px;margin:0;font-weight:700;letter-spacing:.2px;}
   header.topbar .sub{font-size:11.5px;opacity:.75;margin-top:2px;}
   .icon-btn{background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:11px;
     display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;}
-  .search-bar{margin-top:12px;display:flex;gap:8px;align-items:center;}
+  .search-bar{margin-top:12px;display:flex;gap:8px;align-items:center;padding-right:44px;}
   .search-bar input{flex:1;border:none;border-radius:12px;padding:10px 14px;font-size:14px;background:rgba(255,255,255,.16);color:#fff;}
   .search-bar input::placeholder{color:rgba(255,255,255,.65);}
   .time-picker{display:flex;align-items:center;gap:4px;}
@@ -302,6 +304,7 @@
   <div id="errorBanner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:999;background:#dc2626;color:#fff;padding:10px 14px;font-size:12px;font-family:monospace;white-space:pre-wrap;max-height:40vh;overflow:auto;"></div>
   <div id="lockscreen"></div>
   <header class="topbar">
+    <button class="icon-btn header-collapse-btn" id="headerCollapseBtn" title="Hide header for more space">⌃</button>
     <div class="row1">
       <div style="display:flex;align-items:center;gap:10px;">
         <img id="headerLogo" style="display:none;height:38px;width:38px;object-fit:contain;border-radius:10px;background:#fff;padding:3px;">
@@ -311,7 +314,6 @@
         </div>
       </div>
       <div style="display:flex;gap:6px;">
-        <button class="icon-btn" id="headerCollapseBtn" title="Hide header for more space">⌃</button>
         <button class="icon-btn" id="themeToggle">🌙</button>
       </div>
     </div>
