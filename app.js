@@ -797,6 +797,11 @@ function renderRentals() {
     <div class="filter-scroll">
       ${filters.map(([v, l]) => `<div class="chip ${state.filter === v ? 'active' : ''}" data-filter="${v}">${l}</div>`).join('')}
     </div>
+    ${state.filter === 'active' ? `
+    <div class="pro-card-grid" style="margin-bottom:14px;">
+      <div class="pro-stat-card blue"><div class="pro-stat-icon">📋</div><div class="pro-stat-body"><div class="pro-stat-val">${list.length}</div><div class="pro-stat-lbl">Number of Rentals</div></div></div>
+      <div class="pro-stat-card red"><div class="pro-stat-icon">⏳</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(list.reduce((s, r) => s + rentalDue(r), 0))}</div><div class="pro-stat-lbl">Total Rental Due</div></div></div>
+    </div>` : ''}
     ${list.length ? list.map(rentalCardHTML).join('') : '<div class="empty">No rentals match.</div>'}
   `;
 }
