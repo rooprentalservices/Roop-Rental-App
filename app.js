@@ -1088,7 +1088,12 @@ function renderInvoices() {
     ['dateAsc', 'Invoice Date — Oldest to Newest']
   ];
   return `
-    <div class="page-header"><h2>Invoices</h2></div>
+    <div class="page-header">
+      <h2>Invoices</h2>
+      <select id="invoiceSortSelect" class="rpt-select invoice-sort-select">
+        ${invSortOptions.map(([v, l]) => `<option value="${v}" ${invSort === v ? 'selected' : ''}>${l}</option>`).join('')}
+      </select>
+    </div>
     <div class="stat-grid" style="grid-template-columns:1fr 1fr;">
       <div class="stat-card" style="background:linear-gradient(135deg,#e0e7ff,#c7d2fe);"><div class="num" style="color:var(--indigo-900)">${list.length}</div><div class="lbl">Total Invoices</div></div>
       <div class="stat-card" style="background:linear-gradient(135deg,#fee2e2,#fecaca);"><div class="num" style="color:#b91c1c">${fmtMoney(totalDue)}</div><div class="lbl">Total Outstanding</div></div>
@@ -1096,9 +1101,6 @@ function renderInvoices() {
     <div class="filter-scroll">
       ${invFilters.map(([v, l]) => `<div class="chip ${((state.invoiceFilter || 'all') === v) ? 'active' : ''}" data-invoice-filter="${v}">${l}</div>`).join('')}
     </div>
-    <select id="invoiceSortSelect" class="rpt-select" style="margin-bottom:12px;">
-      ${invSortOptions.map(([v, l]) => `<option value="${v}" ${invSort === v ? 'selected' : ''}>${l}</option>`).join('')}
-    </select>
     ${list.length ? list.map(r => {
       const due = rentalDue(r);
       const names = (r.items || []).map(i => `${i.name} x${i.qty}`).slice(0, 2).join(', ');
