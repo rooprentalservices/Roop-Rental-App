@@ -790,16 +790,17 @@ function renderRentals() {
   const sorts = [['newest', 'Rental Date: New to Old'], ['oldest', 'Rental Date: Old to New'], ['nameAZ', 'Name A-Z'], ['nameZA', 'Name Z-A'],
     ['highestDue', 'Highest Due'], ['lowestDue', 'Lowest Due']];
 
-  // Dashboard is contextual to the selected filter tab; Trash/All fall back to the Rented snapshot.
-  let dashCard1Icon = '📋', dashCard1Val = activeRentals.length, dashCard1Lbl = 'Number of Rentals';
-  let dashCard2Icon = '⏳', dashCard2Val = fmtMoney(activeRentals.reduce((s, r) => s + rentalDue(r), 0)), dashCard2Lbl = 'Total Rental Due', dashCard2Color = 'red';
+  // Dashboard is contextual to the selected filter tab; hidden on Trash. All/other tabs fall back to Rented snapshot.
+  let dashCard1Icon = '📋', dashCard1Val = activeRentals.length, dashCard1Lbl = 'No. Of Rentals';
+  let dashCard2Icon = '⏳', dashCard2Val = fmtMoney(activeRentals.reduce((s, r) => s + rentalDue(r), 0)), dashCard2Lbl = 'Rented Due', dashCard2Color = 'red';
   if (state.filter === 'returned') {
-    dashCard1Val = list.length; dashCard1Lbl = 'Number Of Returned';
-    dashCard2Icon = '⏳'; dashCard2Val = fmtMoney(list.reduce((s, r) => s + rentalDue(r), 0)); dashCard2Lbl = 'Total Returned Due'; dashCard2Color = 'red';
+    dashCard1Val = list.length; dashCard1Lbl = 'No. Of Returned';
+    dashCard2Icon = '⏳'; dashCard2Val = fmtMoney(list.reduce((s, r) => s + rentalDue(r), 0)); dashCard2Lbl = 'Returned Due'; dashCard2Color = 'red';
   } else if (state.filter === 'pending') {
-    dashCard1Val = list.length; dashCard1Lbl = 'Number Payment Cleared';
+    dashCard1Val = list.length; dashCard1Lbl = 'Payment Cleared';
     dashCard2Icon = '✅'; dashCard2Val = fmtMoney(list.reduce((s, r) => s + rentalPaid(r), 0)); dashCard2Lbl = 'Total Received'; dashCard2Color = 'green';
   }
+  const showDashboard = state.filter !== 'trash';
 
   return `
     <div class="page-header"><h2>Rentals</h2>
@@ -807,10 +808,11 @@ function renderRentals() {
         ${sorts.map(([v, l]) => `<option value="${v}" ${state.sort === v ? 'selected' : ''}>${l}</option>`).join('')}
       </select>
     </div>
+    ${showDashboard ? `
     <div class="pro-card-grid" style="margin-bottom:14px;">
       <div class="pro-stat-card blue"><div class="pro-stat-icon">${dashCard1Icon}</div><div class="pro-stat-body"><div class="pro-stat-val">${dashCard1Val}</div><div class="pro-stat-lbl">${dashCard1Lbl}</div></div></div>
       <div class="pro-stat-card ${dashCard2Color}"><div class="pro-stat-icon">${dashCard2Icon}</div><div class="pro-stat-body"><div class="pro-stat-val">${dashCard2Val}</div><div class="pro-stat-lbl">${dashCard2Lbl}</div></div></div>
-    </div>
+    </div>` : ''}
     <div class="filter-scroll">
       ${filters.map(([v, l]) => `<div class="chip ${state.filter === v ? 'active' : ''}" data-filter="${v}">${l}</div>`).join('')}
     </div>
