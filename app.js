@@ -3639,7 +3639,7 @@ function bindMainEvents() {
     el.addEventListener('click', () => {
       detailStack = { view: null, id: null };
       state.view = el.dataset.back;
-      try { localStorage.setItem('roopRental_lastView', state.view); } catch (e) {}
+      try { sessionStorage.setItem('roopRental_lastView', state.view); } catch (e) {}
       route();
     });
   });
@@ -3647,7 +3647,7 @@ function bindMainEvents() {
     el.addEventListener('click', () => {
       detailStack = { view: null, id: null };
       state.view = el.dataset.nav;
-      try { localStorage.setItem('roopRental_lastView', state.view); } catch (e) {}
+      try { sessionStorage.setItem('roopRental_lastView', state.view); } catch (e) {}
       route();
     });
   });
@@ -3707,7 +3707,7 @@ async function init() {
       state.filter = 'active';
       state.invoiceFilter = 'due';
       state.settingsPage = null;
-      try { localStorage.setItem('roopRental_lastView', state.view); } catch (e) {}
+      try { sessionStorage.setItem('roopRental_lastView', state.view); } catch (e) {}
       route();
     });
   });
@@ -3789,7 +3789,7 @@ async function init() {
   });
 
   try {
-    const savedView = localStorage.getItem('roopRental_lastView');
+    const savedView = sessionStorage.getItem('roopRental_lastView');
     const validViews = ['dashboard', 'rentals', 'invoices', 'customers', 'reports', 'settings'];
     if (savedView && validViews.includes(savedView)) state.view = savedView;
   } catch (e) {}
