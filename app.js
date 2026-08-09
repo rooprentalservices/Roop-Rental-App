@@ -789,6 +789,18 @@ function renderRentals() {
   ];
   const sorts = [['newest', 'Rental Date: New to Old'], ['oldest', 'Rental Date: Old to New'], ['nameAZ', 'Name A-Z'], ['nameZA', 'Name Z-A'],
     ['highestDue', 'Highest Due'], ['lowestDue', 'Lowest Due']];
+
+  // Dashboard is contextual to the selected filter tab; Trash/All fall back to the Rented snapshot.
+  let dashCard1Icon = '📋', dashCard1Val = activeRentals.length, dashCard1Lbl = 'Number of Rentals';
+  let dashCard2Icon = '⏳', dashCard2Val = fmtMoney(activeRentals.reduce((s, r) => s + rentalDue(r), 0)), dashCard2Lbl = 'Total Rental Due', dashCard2Color = 'red';
+  if (state.filter === 'returned') {
+    dashCard1Val = list.length; dashCard1Lbl = 'Number Of Returned';
+    dashCard2Icon = '⏳'; dashCard2Val = fmtMoney(list.reduce((s, r) => s + rentalDue(r), 0)); dashCard2Lbl = 'Total Returned Due'; dashCard2Color = 'red';
+  } else if (state.filter === 'pending') {
+    dashCard1Val = list.length; dashCard1Lbl = 'Number Payment Cleared';
+    dashCard2Icon = '✅'; dashCard2Val = fmtMoney(list.reduce((s, r) => s + rentalPaid(r), 0)); dashCard2Lbl = 'Total Received'; dashCard2Color = 'green';
+  }
+
   return `
     <div class="page-header"><h2>Rentals</h2>
       <select id="sortSelect" style="border:1px solid var(--border);border-radius:10px;padding:7px;background:var(--card);color:var(--text);font-size:12px;">
@@ -796,8 +808,8 @@ function renderRentals() {
       </select>
     </div>
     <div class="pro-card-grid" style="margin-bottom:14px;">
-      <div class="pro-stat-card blue"><div class="pro-stat-icon">📋</div><div class="pro-stat-body"><div class="pro-stat-val">${activeRentals.length}</div><div class="pro-stat-lbl">Number of Rentals</div></div></div>
-      <div class="pro-stat-card red"><div class="pro-stat-icon">⏳</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(activeRentals.reduce((s, r) => s + rentalDue(r), 0))}</div><div class="pro-stat-lbl">Total Rental Due</div></div></div>
+      <div class="pro-stat-card blue"><div class="pro-stat-icon">${dashCard1Icon}</div><div class="pro-stat-body"><div class="pro-stat-val">${dashCard1Val}</div><div class="pro-stat-lbl">${dashCard1Lbl}</div></div></div>
+      <div class="pro-stat-card ${dashCard2Color}"><div class="pro-stat-icon">${dashCard2Icon}</div><div class="pro-stat-body"><div class="pro-stat-val">${dashCard2Val}</div><div class="pro-stat-lbl">${dashCard2Lbl}</div></div></div>
     </div>
     <div class="filter-scroll">
       ${filters.map(([v, l]) => `<div class="chip ${state.filter === v ? 'active' : ''}" data-filter="${v}">${l}</div>`).join('')}
@@ -1085,6 +1097,7 @@ function renderInvoices() {
     return invoiceNumValue(b) - invoiceNumValue(a); // 'numDesc' default
   });
   const totalDue = list.reduce((s, r) => s + rentalDue(r), 0);
+  const totalReceived = list.reduce((s, r) => s + rentalPaid(r), 0);
   const invFilters = [['all', 'All'], ['due', 'Due'], ['paid', 'Paid']];
   const invSortOptions = [
     ['numDesc', 'Invoice # — Newest to Oldest'],
@@ -1092,6 +1105,7 @@ function renderInvoices() {
     ['dateDesc', 'Invoice Date — Newest to Oldest'],
     ['dateAsc', 'Invoice Date — Oldest to Newest']
   ];
+  const showReceived = state.invoiceFilter === 'paid';
   return `
     <div class="page-header">
       <h2>Invoices</h2>
@@ -1101,7 +1115,9 @@ function renderInvoices() {
     </div>
     <div class="stat-grid" style="grid-template-columns:1fr 1fr;">
       <div class="stat-card" style="background:linear-gradient(135deg,#e0e7ff,#c7d2fe);"><div class="num" style="color:var(--indigo-900)">${list.length}</div><div class="lbl">Total Invoices</div></div>
-      <div class="stat-card" style="background:linear-gradient(135deg,#fee2e2,#fecaca);"><div class="num" style="color:#b91c1c">${fmtMoney(totalDue)}</div><div class="lbl">Total Outstanding</div></div>
+      ${showReceived
+        ? `<div class="stat-card" style="background:linear-gradient(135deg,#dcfce7,#bbf7d0);"><div class="num" style="color:#15803d">${fmtMoney(totalReceived)}</div><div class="lbl">Total Received</div></div>`
+        : `<div class="stat-card" style="background:linear-gradient(135deg,#fee2e2,#fecaca);"><div class="num" style="color:#b91c1c">${fmtMoney(totalDue)}</div><div class="lbl">Total Outstanding</div></div>`}
     </div>
     <div class="filter-scroll">
       ${invFilters.map(([v, l]) => `<div class="chip ${((state.invoiceFilter || 'all') === v) ? 'active' : ''}" data-invoice-filter="${v}">${l}</div>`).join('')}
