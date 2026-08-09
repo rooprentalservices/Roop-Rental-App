@@ -783,6 +783,7 @@ function filterRentals() {
 
 function renderRentals() {
   const list = filterRentals();
+  const activeRentals = state.rentals.filter(r => !r.deleted && !r.archived && itemReturnState(r) !== 'returned');
   const filters = [
     ['active', 'Rented'], ['returned', 'Returned'], ['pending', 'Payment Cleared'], ['trash', 'Trash'], ['all', 'All']
   ];
@@ -794,14 +795,13 @@ function renderRentals() {
         ${sorts.map(([v, l]) => `<option value="${v}" ${state.sort === v ? 'selected' : ''}>${l}</option>`).join('')}
       </select>
     </div>
+    <div class="pro-card-grid" style="margin-bottom:14px;">
+      <div class="pro-stat-card blue"><div class="pro-stat-icon">📋</div><div class="pro-stat-body"><div class="pro-stat-val">${activeRentals.length}</div><div class="pro-stat-lbl">Number of Rentals</div></div></div>
+      <div class="pro-stat-card red"><div class="pro-stat-icon">⏳</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(activeRentals.reduce((s, r) => s + rentalDue(r), 0))}</div><div class="pro-stat-lbl">Total Rental Due</div></div></div>
+    </div>
     <div class="filter-scroll">
       ${filters.map(([v, l]) => `<div class="chip ${state.filter === v ? 'active' : ''}" data-filter="${v}">${l}</div>`).join('')}
     </div>
-    ${state.filter === 'active' ? `
-    <div class="pro-card-grid" style="margin-bottom:14px;">
-      <div class="pro-stat-card blue"><div class="pro-stat-icon">📋</div><div class="pro-stat-body"><div class="pro-stat-val">${list.length}</div><div class="pro-stat-lbl">Number of Rentals</div></div></div>
-      <div class="pro-stat-card red"><div class="pro-stat-icon">⏳</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(list.reduce((s, r) => s + rentalDue(r), 0))}</div><div class="pro-stat-lbl">Total Rental Due</div></div></div>
-    </div>` : ''}
     ${list.length ? list.map(rentalCardHTML).join('') : '<div class="empty">No rentals match.</div>'}
   `;
 }
