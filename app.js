@@ -3636,10 +3636,20 @@ function bindMainEvents() {
   const newCustomerBtn = document.getElementById('newCustomerBtn');
   if (newCustomerBtn) newCustomerBtn.onclick = () => openCustomerForm(null);
   document.querySelectorAll('[data-back]').forEach(el => {
-    el.addEventListener('click', () => { detailStack = { view: null, id: null }; state.view = el.dataset.back; route(); });
+    el.addEventListener('click', () => {
+      detailStack = { view: null, id: null };
+      state.view = el.dataset.back;
+      try { localStorage.setItem('roopRental_lastView', state.view); } catch (e) {}
+      route();
+    });
   });
   document.querySelectorAll('[data-nav]').forEach(el => {
-    el.addEventListener('click', () => { detailStack = { view: null, id: null }; state.view = el.dataset.nav; route(); });
+    el.addEventListener('click', () => {
+      detailStack = { view: null, id: null };
+      state.view = el.dataset.nav;
+      try { localStorage.setItem('roopRental_lastView', state.view); } catch (e) {}
+      route();
+    });
   });
   document.querySelectorAll('[data-filter]').forEach(el => {
     el.addEventListener('click', () => { state.filter = el.dataset.filter; route(); });
@@ -3697,6 +3707,7 @@ async function init() {
       state.filter = 'active';
       state.invoiceFilter = 'due';
       state.settingsPage = null;
+      try { localStorage.setItem('roopRental_lastView', state.view); } catch (e) {}
       route();
     });
   });
@@ -3777,6 +3788,11 @@ async function init() {
     if (draftToSave) await saveDraftSilently(draftToSave);
   });
 
+  try {
+    const savedView = localStorage.getItem('roopRental_lastView');
+    const validViews = ['dashboard', 'rentals', 'invoices', 'customers', 'reports', 'settings'];
+    if (savedView && validViews.includes(savedView)) state.view = savedView;
+  } catch (e) {}
   route();
 
   if ('serviceWorker' in navigator) {
