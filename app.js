@@ -406,10 +406,13 @@ function itemTotal(item, r) {
 function rentalItemsTotal(r) {
   return (r.items || []).reduce((sum, it) => sum + itemTotal(it, r), 0);
 }
+// Paid = actual payments received against the rental. The Advance/security deposit is
+// refundable and is NOT auto-counted here — it only counts once the user explicitly adjusts
+// some or all of it toward the rental via advanceAdjusted (see applyAdvanceToDue below).
 function rentalPaid(r) {
-  const adv = Number(r.advanceAmount) || 0;
   const extra = (r.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
-  return adv + extra;
+  const adjusted = Number(r.advanceAdjusted) || 0;
+  return extra + adjusted;
 }
 function rentalGrandTotal(r) {
   return rentalItemsTotal(r) + (Number(r.oldDues) || 0) - (Number(r.refundAmount) || 0)
@@ -417,6 +420,28 @@ function rentalGrandTotal(r) {
 }
 function rentalDue(r) {
   return Math.max(rentalGrandTotal(r) - rentalPaid(r), 0);
+}
+// Advance/security deposit still held and refundable (i.e. not yet adjusted toward the rental).
+function advanceRefundable(r) {
+  return Math.max((Number(r.advanceAmount) || 0) - (Number(r.advanceAdjusted) || 0), 0);
+}
+// How much of the still-refundable advance COULD be applied to reduce the current due, if the
+// user explicitly chooses to (see applyAdvanceToDue) — informational only, nothing auto-applies.
+function advanceApplicableToDue(r) {
+  return Math.min(advanceRefundable(r), rentalDue(r));
+}
+// Suggested refund if settling now: the advance remaining after covering the current due.
+function rentalRefundSuggested(r) {
+  return Math.max(advanceRefundable(r) - rentalDue(r), 0);
+}
+// Explicit user action: apply up to `amount` of the refundable advance toward the rental due.
+// Never called automatically — Advance stays fully refundable until this is invoked.
+async function applyAdvanceToDue(r, amount) {
+  const applicable = Math.min(Number(amount) || 0, advanceApplicableToDue(r));
+  if (applicable <= 0) return 0;
+  r.advanceAdjusted = (Number(r.advanceAdjusted) || 0) + applicable;
+  await dbPut('rentals', r);
+  return applicable;
 }
 // Revenue-only helpers — used ONLY by Dashboard/Reports so transport pass-through
 // never counts as business income. Customer balances/due amounts above are untouched.
@@ -584,12 +609,14 @@ function currentReportRangeLabel() {
   return fyLabel(state.reportFY != null ? state.reportFY : fyStartYearFor());
 }
 
-// True cash-basis collection: sums each individual payment (and the advance, dated to the rental's
-// own start date) that actually falls within the range — independent of when the rental itself started.
+// True cash-basis collection: sums each individual payment that actually falls within the range,
+// plus any advance amount the user has explicitly adjusted toward the rental (dated to the rental's
+// own start date, as an approximation since adjustment doesn't have its own separate date). The
+// refundable/unadjusted portion of an advance is a deposit, not rental income — never counted here.
 function paymentsCollectedInRange(from, to) {
   let total = 0;
   state.rentals.filter(r => !r.deleted).forEach(r => {
-    if (r.date && r.date >= from && r.date <= to) total += Number(r.advanceAmount) || 0;
+    if (r.date && r.date >= from && r.date <= to) total += Number(r.advanceAdjusted) || 0;
     (r.payments || []).forEach(p => { if (p.date && p.date >= from && p.date <= to) total += Number(p.amount) || 0; });
   });
   return total;
@@ -858,11 +885,12 @@ function renderCustomerDetail(id) {
   const totalBiz = rentals.reduce((s, r) => s + rentalGrandTotal(r), 0);
   const totalDue = rentals.reduce((s, r) => s + rentalDue(r), 0);
 
-  // full payment ledger across all this customer's rentals (advance counted as a payment too)
+  // Transaction history across all this customer's rentals — includes the refundable advance as
+  // a cash-transaction record (tagged separately below), even though it's excluded from rentalPaid()
   const ledger = [];
   rentals.forEach(r => {
-    if (Number(r.advanceAmount) > 0) ledger.push({ date: r.advanceDate || r.date, amount: r.advanceAmount, mode: r.advanceMode || 'Cash', invoiceNumber: r.invoiceNumber });
-    (r.payments || []).forEach(p => ledger.push({ date: p.date, amount: p.amount, mode: p.mode, invoiceNumber: r.invoiceNumber }));
+    if (Number(r.advanceAmount) > 0) ledger.push({ date: r.advanceDate || r.date, amount: r.advanceAmount, mode: r.advanceMode || 'Cash', invoiceNumber: r.invoiceNumber, isAdvance: true });
+    (r.payments || []).forEach(p => ledger.push({ date: p.date, amount: p.amount, mode: p.mode, invoiceNumber: r.invoiceNumber, isAdvance: false }));
   });
   ledger.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
@@ -915,7 +943,7 @@ function renderCustomerDetail(id) {
     <div class="card">
       ${ledger.length ? ledger.map(p => `
         <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:12.5px;">
-          <span>${fmtDate(p.date)} · ${escapeHtml(p.mode)} · #${escapeHtml(p.invoiceNumber || '—')}</span><b>${fmtMoney(p.amount)}</b>
+          <span>${fmtDate(p.date)} · ${escapeHtml(p.mode)} · #${escapeHtml(p.invoiceNumber || '—')}${p.isAdvance ? ' · <span style="color:var(--text-soft);">Advance</span>' : ''}</span><b>${fmtMoney(p.amount)}</b>
         </div>`).join('') : '<div class="empty">No payments recorded yet.</div>'}
     </div>
   `;
@@ -1661,7 +1689,7 @@ function newBlankRental() {
     transportChargeDelivery: 0, transportDeliveryPaidBy: 'party', transportDeliveryShowInvoice: false,
     transportChargePickup: 0, transportPickupPaidBy: 'party', transportPickupShowInvoice: false,
     items: [],
-    advanceAmount: 0, advanceMode: 'Cash', advanceDate: todayISO(), refundAmount: 0, oldDues: 0, discount: 0, notes: '',
+    advanceAmount: 0, advanceMode: 'Cash', advanceDate: todayISO(), advanceAdjusted: 0, refundAmount: 0, oldDues: 0, discount: 0, notes: '',
     actualReturnDate: '', actualReturnTime: '22:00',
     payments: [], kyc: [], archived: false, deleted: false, isDraft: false
   };
@@ -1960,14 +1988,16 @@ function refreshFormTotals() {
   const grand = rentalGrandTotal(formDraft);
   const paid = rentalPaid(formDraft);
   const due = Math.max(grand - paid, 0);
+  const advRefundable = advanceRefundable(formDraft);
   box.innerHTML = `
     <div class="row"><span>Items Total</span><span>${fmtMoney(totalItems)}</span></div>
     <div class="row"><span>+ Transportation (billed)</span><span>${fmtMoney(transportBilledTotal(formDraft))}</span></div>
     <div class="row"><span>- Discount</span><span>${fmtMoney(formDraft.discount)}</span></div>
     <div class="row"><span>+ Old Dues</span><span>${fmtMoney(formDraft.oldDues)}</span></div>
     <div class="row"><span>- Refund</span><span>${fmtMoney(formDraft.refundAmount)}</span></div>
-    <div class="row"><span>Paid (Advance + Payments)</span><span>${fmtMoney(paid)}</span></div>
+    <div class="row"><span>Paid (Payments Received)</span><span>${fmtMoney(paid)}</span></div>
     <div class="row big"><span>Balance Due</span><span>${fmtMoney(due)}</span></div>
+    ${advRefundable > 0 ? `<div class="row" style="color:var(--text-soft);font-size:11.5px;"><span>Advance Held (Refundable, not deducted)</span><span>${fmtMoney(advRefundable)}</span></div>` : ''}
   `;
 }
 
@@ -2385,6 +2415,19 @@ function rentalDetailHTML(r) {
     <div class="row"><span>Paid</span><span>${fmtMoney(rentalPaid(r))}</span></div>
     <div class="row big"><span>Balance Due</span><span>${fmtMoney(due)}</span></div>
   </div>
+  ${(Number(r.advanceAmount) || 0) > 0 ? `
+  <div class="section-title">Advance / Security Deposit</div>
+  <div class="card">
+    <div class="row" style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;"><span>Advance Collected</span><span>${fmtMoney(r.advanceAmount)}</span></div>
+    <div class="row" style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;"><span>Adjusted Toward Rental</span><span>${fmtMoney(r.advanceAdjusted)}</span></div>
+    <div class="row" style="display:flex;justify-content:space-between;font-size:13.5px;font-weight:800;padding:4px 0;border-top:1px solid var(--border);margin-top:4px;padding-top:8px;"><span>Still Refundable</span><span>${fmtMoney(advanceRefundable(r))}</span></div>
+    <div style="font-size:11px;color:var(--text-soft);margin-top:6px;">The advance is a refundable deposit and is kept separate from Paid/Due — it's only applied toward the rental if you choose to below.</div>
+    ${advanceApplicableToDue(r) > 0 ? `
+    <div class="btn-row" style="margin-top:10px;">
+      <button class="btn btn-outline" id="applyAdvanceBtn" style="flex:1;">Apply ${fmtMoney(advanceApplicableToDue(r))} of Advance to Due</button>
+    </div>` : ''}
+    ${rentalRefundSuggested(r) > 0 ? `<div style="font-size:12px;color:var(--green);font-weight:700;margin-top:8px;">✅ ${fmtMoney(rentalRefundSuggested(r))} would be refundable to the customer if settled now.</div>` : ''}
+  </div>` : ''}
   ${r.notes ? `<div class="section-title">Notes</div><div class="card" style="font-size:13px;">${escapeHtml(r.notes)}</div>` : ''}
   ${(r.kyc || []).length ? `<div class="section-title">KYC Documents</div><div class="kyc-grid">${kycThumbsViewHTML(r.kyc)}</div>` : ''}
 
@@ -2484,8 +2527,9 @@ function defaultInvoiceTemplate() {
     '📆 Rental Period: {rentalDays} Days',
     '',
     '💰 Total Rental Charges: {totalCharges}',
-    '💵 Advance Paid: {advance}',
-    '💳 Balance Amount: {balance}',
+    '💵 Paid: {paidAmount}',
+    '💳 Balance Due: {balance}',
+    '🔒 Advance Held (Refundable): {advance}',
     '',
     '✅ Payment Status: {paymentStatus}',
     '',
@@ -2525,7 +2569,7 @@ function buildInvoiceText(r) {
     items: itemLines, invoiceNumber: r.invoiceNumber || '',
     rentalDate: fmtDate(r.date), returnDate: r.actualReturnDate ? fmtDate(r.actualReturnDate) : 'Ongoing',
     rentalDays: String(rentalDays(r)), totalCharges: fmtMoney(rentalGrandTotal(r)),
-    advance: fmtMoney(rentalPaid(r)), balance: fmtMoney(due),
+    paidAmount: fmtMoney(rentalPaid(r)), advance: fmtMoney(advanceRefundable(r)), refund: fmtMoney(rentalRefundSuggested(r)), balance: fmtMoney(due),
     paymentStatus: due <= 0 ? 'Paid' : 'Pending'
   };
   return renderTemplate(s.whatsappInvoiceTemplate || defaultInvoiceTemplate(), values);
@@ -2569,6 +2613,13 @@ function bindRentalDetailEvents(r) {
   document.getElementById('whatsappInvoiceBtn').onclick = () => requireReturned(() => sendWhatsApp(r, buildInvoiceText(r)));
   document.getElementById('copyInvoiceBtn').onclick = () => requireReturned(() => copyToClipboard(buildInvoiceText(r)));
   document.getElementById('printInvoiceBtn').onclick = () => requireReturned(() => openInvoicePrint(r));
+  const applyAdvanceBtn = document.getElementById('applyAdvanceBtn');
+  if (applyAdvanceBtn) applyAdvanceBtn.onclick = async () => {
+    const applicable = advanceApplicableToDue(r);
+    if (!confirm(`Apply ${fmtMoney(applicable)} of the refundable advance toward this rental's due? This portion will no longer be refundable.`)) return;
+    const applied = await applyAdvanceToDue(r, applicable);
+    if (applied > 0) { toast(`${fmtMoney(applied)} applied from advance.`); openRentalDetail(r.id); }
+  };
   document.getElementById('duplicateRentalBtn').onclick = () => {
     closeModal();
     formDraft = JSON.parse(JSON.stringify(r));
@@ -2579,7 +2630,7 @@ function bindRentalDetailEvents(r) {
     formDraft.date = todayISO();
     formDraft.time = '10:00';
     formDraft.actualReturnDate = ''; formDraft.actualReturnTime = '22:00';
-    formDraft.advanceAmount = 0; formDraft.refundAmount = 0; formDraft.payments = [];
+    formDraft.advanceAmount = 0; formDraft.advanceAdjusted = 0; formDraft.refundAmount = 0; formDraft.payments = [];
     formDraft.kyc = []; formDraft.archived = false; formDraft.deleted = false; formDraft.isDraft = false;
     state.editingId = null;
     renderModal(rentalFormHTML());
@@ -2774,8 +2825,10 @@ function openInvoicePrint(r) {
   const oldDues = Number(r.oldDues) || 0;
   const refund = Number(r.refundAmount) || 0;
   const rentalTotal = rentalGrandTotal(r); // unchanged calc: items + transport - discount + oldDues - refund
-  const paid = rentalPaid(r);
+  const paid = rentalPaid(r); // actual payments received + any advance explicitly adjusted — excludes refundable advance
   const due = rentalDue(r);
+  const advanceRefundableAmt = advanceRefundable(r); // still-refundable security deposit, shown separately, never netted into Balance Due
+  const refundSuggested = rentalRefundSuggested(r);
 
   const stampSigBlock = `
     <div class="sig-block" style="display:flex;justify-content:flex-end;gap:24px;margin-top:22px;align-items:flex-end;">
@@ -2795,8 +2848,13 @@ function openInvoicePrint(r) {
       ${oldDues > 0 ? `<div class="trow"><span>Old Dues Carried Forward</span><span>${fmtMoney(oldDues)}</span></div>` : ''}
       ${refund > 0 ? `<div class="trow"><span>Refund Adjustment</span><span>-${fmtMoney(refund)}</span></div>` : ''}
       <div class="trow grand-total"><span>Rental Total</span><span>${fmtMoney(rentalTotal)}</span></div>
-      <div class="trow"><span>Advance Received</span><span>${paid > 0 ? '-' + fmtMoney(paid) : fmtMoney(0)}</span></div>
+      <div class="trow"><span>Paid</span><span>${paid > 0 ? '-' + fmtMoney(paid) : fmtMoney(0)}</span></div>
       <div class="trow balance-due"><span>Balance Due</span><span>${fmtMoney(due)}</span></div>
+      ${(advanceRefundableAmt > 0 || refundSuggested > 0) ? `
+      <div class="trow section-label" style="margin-top:10px;"><span>Security Deposit (Refundable)</span><span></span></div>
+      ${advanceRefundableAmt > 0 ? `<div class="trow sub"><span>Advance Held</span><span>${fmtMoney(advanceRefundableAmt)}</span></div>` : ''}
+      ${refundSuggested > 0 ? `<div class="trow sub"><span>Refundable to Customer</span><span>${fmtMoney(refundSuggested)}</span></div>` : ''}
+      ` : ''}
     </div>`;
 
   w.document.write(`
