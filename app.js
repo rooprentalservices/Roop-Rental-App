@@ -755,10 +755,10 @@ function rentalCardHTML(r) {
       <span>${r.deliveryAddress ? '📍 ' + escapeHtml(r.deliveryAddress) : ''}</span>
     </div>
     <div class="rc-line4">
-      <span>${fmtMoney(rentalGrandTotal(r))}</span>
-      <span>${fmtMoney(rentalAdvance(r))}</span>
-      <span>${fmtMoney(rentalPaid(r))}</span>
-      <span class="due-amt ${due <= 0 ? 'clear' : ''}">${fmtMoney(due)}</span>
+      <span>Total: ${fmtMoney(rentalGrandTotal(r))}</span>
+      <span>Advance: ${fmtMoney(rentalAdvance(r))}</span>
+      <span>Paid: ${fmtMoney(rentalPaid(r))}</span>
+      <span class="due-amt ${due <= 0 ? 'clear' : ''}">Due: ${fmtMoney(due)}</span>
     </div>
   </div>`;
 }
