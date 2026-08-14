@@ -2825,12 +2825,12 @@ function openInvoicePrint(r) {
       ${showDelivery ? `<div class="trow sub"><span>Delivery</span><span>${fmtMoney(deliveryBilled)}</span></div>` : ''}
       ${showPickup ? `<div class="trow sub"><span>Pickup</span><span>${fmtMoney(pickupBilled)}</span></div>` : ''}
       ` : ''}
-      <div class="trow"><span>Discount</span><span>${discount > 0 ? '-' + fmtMoney(discount) : fmtMoney(0)}</span></div>
+      ${discount > 0 ? `<div class="trow"><span>Discount</span><span>-${fmtMoney(discount)}</span></div>` : ''}
       ${oldDues > 0 ? `<div class="trow"><span>Old Dues Carried Forward</span><span>${fmtMoney(oldDues)}</span></div>` : ''}
       ${refund > 0 ? `<div class="trow"><span>Refund Adjustment</span><span>-${fmtMoney(refund)}</span></div>` : ''}
       <div class="trow grand-total"><span>Rental Total</span><span>${fmtMoney(rentalTotal)}</span></div>
       ${advance > 0 ? `<div class="trow"><span>Advance (Adjusted)</span><span>-${fmtMoney(advance)}</span></div>` : ''}
-      <div class="trow"><span>Paid</span><span>${paid > 0 ? '-' + fmtMoney(paid) : fmtMoney(0)}</span></div>
+      ${paid > 0 ? `<div class="trow"><span>Paid</span><span>-${fmtMoney(paid)}</span></div>` : ''}
       <div class="trow balance-due"><span>Balance Due</span><span>${fmtMoney(due)}</span></div>
       ${advanceRefund > 0 ? `<div class="trow" style="color:var(--green);font-weight:800;margin-top:6px;"><span>Refund to Customer</span><span>${fmtMoney(advanceRefund)}</span></div>` : ''}
     </div>`;
