@@ -146,7 +146,11 @@ function rentalDays(r) {
 }
 function fmtMoney(n) {
   n = Number(n) || 0;
-  return '₹' + n.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+  // Only show decimals when the amount actually has paise (e.g. ₹17.50) — whole amounts
+  // still display cleanly as ₹18 with no trailing ".00". Previously this always rounded
+  // to whole rupees, silently turning ₹17.50 into ₹18 everywhere it was displayed.
+  const hasPaise = Math.round(n * 100) % 100 !== 0;
+  return '₹' + n.toLocaleString('en-IN', { minimumFractionDigits: hasPaise ? 2 : 0, maximumFractionDigits: 2 });
 }
 function daysBetween(a, b) {
   if (!a) return 0;
@@ -1889,7 +1893,7 @@ function itemRowHTML(it, id) {
     </div>
     <div class="field-row">
       <div class="field"><label>Qty</label><input type="number" class="it-qty" data-id="${id}" value="${it.qty}"></div>
-      <div class="field"><label>Rate/Day</label><input type="number" class="it-rate" data-id="${id}" value="${it.rentPerDay}"></div>
+      <div class="field"><label>Rate/Day</label><input type="number" step="0.01" class="it-rate" data-id="${id}" value="${it.rentPerDay}"></div>
     </div>
     <div style="font-size:12px;color:var(--text-soft);">Line total: <b>${fmtMoney(itemTotal(it, formDraft))}</b></div>
   </div>`;
