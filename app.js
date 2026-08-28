@@ -423,6 +423,14 @@ function rentalGrandTotal(r) {
     - (Number(r.discount) || 0) - (Number(r.refundAmount) || 0);
 }
 function rentalAdvance(r) { return Number(r.advanceAmount) || 0; }
+// Which address to show on the invoice — set by the mutually-exclusive "Show in Invoice"
+// checkboxes on Customer Address / Delivery Address. Falls back sensibly if neither was chosen
+// or the chosen one is empty, so older rentals (created before this feature) still work.
+function invoiceDisplayAddress(r) {
+  if (r.invoiceAddressChoice === 'customer') return r.customerAddress || r.deliveryAddress || '';
+  if (r.invoiceAddressChoice === 'delivery') return r.deliveryAddress || r.customerAddress || '';
+  return r.deliveryAddress || r.customerAddress || '';
+}
 // Settlement: Advance is adjusted against the Final Rental Amount automatically. Any further
 // actual payments (Paid) reduce it further. Due never goes negative.
 function rentalDue(r) {
@@ -1673,7 +1681,7 @@ function newBlankRental() {
     invoiceNumber: '',
     invoiceDate: '',
     date: todayISO(), time: '10:00',
-    customerName: '', customerInvoiceName: '', customerMobile: '', altMobile: '', customerAddress: '', deliveryAddress: '',
+    customerName: '', customerInvoiceName: '', customerMobile: '', altMobile: '', customerAddress: '', deliveryAddress: '', invoiceAddressChoice: 'delivery',
     transportMode: '', transporterName: '', transporterMobile: '', vehicleNumber: '',
     transportChargeDelivery: 0, transportDeliveryPaidBy: 'party', transportDeliveryShowInvoice: false,
     transportChargePickup: 0, transportPickupPaidBy: 'party', transportPickupShowInvoice: false,
@@ -1754,7 +1762,15 @@ function rentalFormHTML() {
     <button class="btn btn-ghost btn-sm" id="pickContactBtn" type="button">📇 Pick from Contacts</button>
   </div>
   <div class="field"><label>Customer Address</label><textarea id="f_customerAddress">${escapeHtml(r.customerAddress)}</textarea></div>
+  <div class="field" style="display:flex;justify-content:space-between;align-items:center;margin-top:-6px;margin-bottom:10px;">
+    <label style="margin:0;">Customer Address — Show in Invoice</label>
+    <input type="checkbox" id="f_invoiceAddrCustomer" ${r.invoiceAddressChoice === 'customer' ? 'checked' : ''} style="width:20px;height:20px;">
+  </div>
   <div class="field"><label>Delivery Address</label><textarea id="f_deliveryAddress">${escapeHtml(r.deliveryAddress)}</textarea></div>
+  <div class="field" style="display:flex;justify-content:space-between;align-items:center;margin-top:-6px;margin-bottom:10px;">
+    <label style="margin:0;">Delivery Address — Show in Invoice</label>
+    <input type="checkbox" id="f_invoiceAddrDelivery" ${r.invoiceAddressChoice === 'delivery' ? 'checked' : ''} style="width:20px;height:20px;">
+  </div>
   <div id="bizAddrHint"></div>
 
   <div class="section-title">Transport</div>
@@ -2046,6 +2062,17 @@ function bindRentalFormEvents() {
   document.getElementById('f_transportPickupShowInvoice').addEventListener('change', (e) => {
     formDraft.transportPickupShowInvoice = e.target.checked;
     refreshFormTotals();
+  });
+
+  const custAddrCb = document.getElementById('f_invoiceAddrCustomer');
+  const delAddrCb = document.getElementById('f_invoiceAddrDelivery');
+  custAddrCb.addEventListener('change', (e) => {
+    if (e.target.checked) { formDraft.invoiceAddressChoice = 'customer'; delAddrCb.checked = false; }
+    else if (formDraft.invoiceAddressChoice === 'customer') { formDraft.invoiceAddressChoice = ''; }
+  });
+  delAddrCb.addEventListener('change', (e) => {
+    if (e.target.checked) { formDraft.invoiceAddressChoice = 'delivery'; custAddrCb.checked = false; }
+    else if (formDraft.invoiceAddressChoice === 'delivery') { formDraft.invoiceAddressChoice = ''; }
   });
 
   // customer autofill
@@ -2557,7 +2584,7 @@ function buildInvoiceText(r) {
   const values = {
     businessName: s.businessName, tagline: s.tagline || '', ownerName: s.ownerName, phone: s.phone, address: s.address,
     customerName: r.customerInvoiceName || r.customerName, mobile: r.customerMobile || '—',
-    deliveryAddress: r.deliveryAddress || r.customerAddress || '—',
+    deliveryAddress: invoiceDisplayAddress(r) || '—',
     items: itemLines, invoiceNumber: r.invoiceNumber || '',
     rentalDate: fmtDate(r.date), returnDate: r.actualReturnDate ? fmtDate(r.actualReturnDate) : 'Ongoing',
     rentalDays: String(rentalDays(r)), totalCharges: fmtMoney(rentalGrandTotal(r)),
@@ -2897,7 +2924,7 @@ function openInvoicePrint(r) {
         <div class="meta-grid">
           <div><span>Customer</span>${escapeHtml(r.customerInvoiceName || r.customerName)}</div>
           <div><span>Mobile</span>${escapeHtml(r.customerMobile || '—')}</div>
-          <div><span>Address</span>${escapeHtml(r.customerAddress || '—')}</div>
+          <div><span>Address</span>${escapeHtml(invoiceDisplayAddress(r) || '—')}</div>
           ${r.vehicleNumber ? `<div><span>Vehicle Number</span>${escapeHtml(r.vehicleNumber)}</div>` : ''}
           <div><span>Invoice Date</span>${fmtDate(r.invoiceDate || r.date)}</div>
           <div><span>Rental Date</span>${fmtDate(r.date)}</div>
