@@ -1761,15 +1761,19 @@ function rentalFormHTML() {
   <div class="btn-row" style="margin-top:-4px;margin-bottom:12px;">
     <button class="btn btn-ghost btn-sm" id="pickContactBtn" type="button">📇 Pick from Contacts</button>
   </div>
-  <div class="field"><label>Customer Address</label><textarea id="f_customerAddress">${escapeHtml(r.customerAddress)}</textarea></div>
-  <div class="field" style="display:flex;justify-content:space-between;align-items:center;margin-top:-6px;margin-bottom:10px;">
-    <label style="margin:0;">Customer Address — Show in Invoice</label>
-    <input type="checkbox" id="f_invoiceAddrCustomer" ${r.invoiceAddressChoice === 'customer' ? 'checked' : ''} style="width:20px;height:20px;">
+  <div class="field">
+    <label style="display:flex;justify-content:space-between;align-items:center;">
+      <span>Customer Address</span>
+      <span style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:11px;color:var(--text-soft);">Show in Invoice <input type="checkbox" id="f_invoiceAddrCustomer" ${r.invoiceAddressChoice === 'customer' ? 'checked' : ''} style="width:18px;height:18px;"></span>
+    </label>
+    <textarea id="f_customerAddress">${escapeHtml(r.customerAddress)}</textarea>
   </div>
-  <div class="field"><label>Delivery Address</label><textarea id="f_deliveryAddress">${escapeHtml(r.deliveryAddress)}</textarea></div>
-  <div class="field" style="display:flex;justify-content:space-between;align-items:center;margin-top:-6px;margin-bottom:10px;">
-    <label style="margin:0;">Delivery Address — Show in Invoice</label>
-    <input type="checkbox" id="f_invoiceAddrDelivery" ${r.invoiceAddressChoice === 'delivery' ? 'checked' : ''} style="width:20px;height:20px;">
+  <div class="field">
+    <label style="display:flex;justify-content:space-between;align-items:center;">
+      <span>Delivery Address</span>
+      <span style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:11px;color:var(--text-soft);">Show in Invoice <input type="checkbox" id="f_invoiceAddrDelivery" ${r.invoiceAddressChoice === 'delivery' ? 'checked' : ''} style="width:18px;height:18px;"></span>
+    </label>
+    <textarea id="f_deliveryAddress">${escapeHtml(r.deliveryAddress)}</textarea>
   </div>
   <div id="bizAddrHint"></div>
 
