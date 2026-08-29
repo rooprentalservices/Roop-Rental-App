@@ -98,44 +98,21 @@ function combineDateTime(dateStr, timeStr) {
   return new Date(`${dateStr || todayISO()}T${timeStr || '00:00'}:00`);
 }
 
-/* 12-hour AM/PM time picker (native <input type=time> shows 24hr on many Android devices) */
-function time24to12(t) {
-  let [h, m] = (t || '00:00').split(':').map(Number);
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  let h12 = h % 12; if (h12 === 0) h12 = 12;
-  return { h12, m, ampm };
-}
-function time12to24(h12, m, ampm) {
-  let h = Number(h12) % 12;
-  if (ampm === 'PM') h += 12;
-  return `${pad2(h)}:${pad2(m)}`;
-}
+/* Time fields use the native <input type="time"> element. On Android/Chrome this opens the
+   OS's own Material Design clock-style time picker (large analog clock, AM/PM toggle, 5-minute
+   selection, Cancel/OK) — the native experience the UI was redesigned to match. The underlying
+   value stays a plain 24-hour "HH:MM" string exactly as before, so no calculation/date logic
+   changes at all; only the input UI is different. */
 function timePickerHTML(idPrefix, value24) {
-  const t = time24to12(value24);
-  const hours = Array.from({ length: 12 }, (_, i) => i + 1);
-  const mins = Array.from({ length: 60 }, (_, i) => i);
-  return `
-  <div class="time-picker">
-    <select class="tp-hour" id="${idPrefix}_h">${hours.map(h => `<option value="${h}" ${h === t.h12 ? 'selected' : ''}>${h}</option>`).join('')}</select>
-    <span>:</span>
-    <select class="tp-min" id="${idPrefix}_m">${mins.map(m => `<option value="${m}" ${m === t.m ? 'selected' : ''}>${pad2(m)}</option>`).join('')}</select>
-    <select class="tp-ampm" id="${idPrefix}_ap">
-      <option ${t.ampm === 'AM' ? 'selected' : ''}>AM</option>
-      <option ${t.ampm === 'PM' ? 'selected' : ''}>PM</option>
-    </select>
-  </div>`;
+  return `<input type="time" id="${idPrefix}" class="native-time-input" value="${value24 || '00:00'}">`;
 }
 function readTimePicker(idPrefix) {
-  const h = Number(document.getElementById(idPrefix + '_h').value);
-  const m = Number(document.getElementById(idPrefix + '_m').value);
-  const ap = document.getElementById(idPrefix + '_ap').value;
-  return time12to24(h, m, ap);
+  const el = document.getElementById(idPrefix);
+  return (el && el.value) ? el.value : '00:00';
 }
 function bindTimePicker(idPrefix, onChange) {
-  ['_h', '_m', '_ap'].forEach(suffix => {
-    const el = document.getElementById(idPrefix + suffix);
-    if (el) el.addEventListener('change', () => onChange(readTimePicker(idPrefix)));
-  });
+  const el = document.getElementById(idPrefix);
+  if (el) el.addEventListener('change', () => onChange(readTimePicker(idPrefix)));
 }
 
 function rentalDays(r) {
@@ -1786,10 +1763,10 @@ function rentalFormHTML() {
   <div class="field"><label>Vehicle Number</label><input id="f_vehicleNumber" value="${escapeHtml(r.vehicleNumber || '')}" placeholder="e.g. GJ01AB1234"></div>
 
   <div class="field">
-    <div class="transport-charge-line">
-      <label>Transportation Charge — Delivery</label>
-      <label class="show-invoice-inline"><input type="checkbox" id="f_transportDeliveryShowInvoice" ${r.transportDeliveryShowInvoice ? 'checked' : ''}> Show in Invoice</label>
-    </div>
+    <label style="display:flex;justify-content:space-between;align-items:center;">
+      <span>Transportation Charge — Delivery</span>
+      <span style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:11px;color:var(--text-soft);">Show in Invoice <input type="checkbox" id="f_transportDeliveryShowInvoice" ${r.transportDeliveryShowInvoice ? 'checked' : ''} style="width:18px;height:18px;"></span>
+    </label>
     <input id="f_transportChargeDelivery" type="number" value="${r.transportChargeDelivery || 0}">
   </div>
   <div class="chip-row" id="deliveryPaidByChips">
@@ -1798,10 +1775,10 @@ function rentalFormHTML() {
   </div>
 
   <div class="field">
-    <div class="transport-charge-line">
-      <label>Transportation Charge — Pickup</label>
-      <label class="show-invoice-inline"><input type="checkbox" id="f_transportPickupShowInvoice" ${r.transportPickupShowInvoice ? 'checked' : ''}> Show in Invoice</label>
-    </div>
+    <label style="display:flex;justify-content:space-between;align-items:center;">
+      <span>Transportation Charge — Pickup</span>
+      <span style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:11px;color:var(--text-soft);">Show in Invoice <input type="checkbox" id="f_transportPickupShowInvoice" ${r.transportPickupShowInvoice ? 'checked' : ''} style="width:18px;height:18px;"></span>
+    </label>
     <input id="f_transportChargePickup" type="number" value="${r.transportChargePickup || 0}">
   </div>
   <div class="chip-row" id="pickupPaidByChips">
