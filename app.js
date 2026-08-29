@@ -98,21 +98,133 @@ function combineDateTime(dateStr, timeStr) {
   return new Date(`${dateStr || todayISO()}T${timeStr || '00:00'}:00`);
 }
 
-/* Time fields use the native <input type="time"> element. On Android/Chrome this opens the
-   OS's own Material Design clock-style time picker (large analog clock, AM/PM toggle, 5-minute
-   selection, Cancel/OK) — the native experience the UI was redesigned to match. The underlying
-   value stays a plain 24-hour "HH:MM" string exactly as before, so no calculation/date logic
-   changes at all; only the input UI is different. */
+/* Time fields: a custom 12-hour clock-style picker (large digital display, AM/PM buttons,
+   circular clock face, Cancel/OK). Built custom instead of the native <input type="time">
+   because that native picker's 12hr/24hr display depends on the phone's system locale setting,
+   which we can't override — this guarantees AM/PM display on every device. The underlying value
+   is still stored as a plain 24-hour "HH:MM" string exactly as before, so no calculation/date
+   logic changes at all — only the input UI is different. */
+function time24to12(t) {
+  let [h, m] = (t || '00:00').split(':').map(Number);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  let h12 = h % 12; if (h12 === 0) h12 = 12;
+  return { h12, m, ampm };
+}
+function time12to24(h12, m, ampm) {
+  let h = Number(h12) % 12;
+  if (ampm === 'PM') h += 12;
+  return `${pad2(h)}:${pad2(m)}`;
+}
 function timePickerHTML(idPrefix, value24) {
-  return `<input type="time" id="${idPrefix}" class="native-time-input" value="${value24 || '00:00'}">`;
+  const t = time24to12(value24);
+  const disp = `${t.h12}:${pad2(t.m)} ${t.ampm}`;
+  return `<button type="button" class="native-time-input time-display-btn" id="${idPrefix}" data-value24="${value24 || '00:00'}">🕐 ${disp}</button>`;
 }
 function readTimePicker(idPrefix) {
   const el = document.getElementById(idPrefix);
-  return (el && el.value) ? el.value : '00:00';
+  return (el && el.dataset.value24) ? el.dataset.value24 : '00:00';
 }
 function bindTimePicker(idPrefix, onChange) {
   const el = document.getElementById(idPrefix);
-  if (el) el.addEventListener('change', () => onChange(readTimePicker(idPrefix)));
+  if (!el) return;
+  el.addEventListener('click', () => {
+    openClockPicker(el.dataset.value24, (newValue24) => {
+      el.dataset.value24 = newValue24;
+      const t = time24to12(newValue24);
+      el.textContent = `🕐 ${t.h12}:${pad2(t.m)} ${t.ampm}`;
+      onChange(newValue24);
+    });
+  });
+}
+
+// Renders the 12 numbers of a clock face in a circle. `labels` are what's shown (1-12, or
+// 00/05/10.../55), `values` are the underlying numeric values those labels select.
+function clockFaceNumbersHTML(labels, values, selectedValue) {
+  const R = 108; // px radius from center to each number's position
+  return labels.map((label, i) => {
+    const angle = (i * 30 - 90) * (Math.PI / 180); // 12 positions, 12 o'clock = index 0
+    const x = 130 + R * Math.cos(angle);
+    const y = 130 + R * Math.sin(angle);
+    const isSelected = values[i] === selectedValue;
+    return `<div class="cp-num ${isSelected ? 'selected' : ''}" data-val="${values[i]}" style="left:${x}px;top:${y}px;">${label}</div>`;
+  }).join('');
+}
+function clockHandHTML(labels, values, selectedValue) {
+  const idx = values.indexOf(selectedValue);
+  if (idx < 0) return '';
+  const angleDeg = idx * 30; // 0deg = pointing up (12 o'clock), rotates clockwise
+  return `<div class="cp-hand" style="transform:rotate(${angleDeg}deg);"></div>`;
+}
+function clockFaceHTML(mode, h12, m) {
+  const hourLabels = [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+  const minLabels = ['00', '05', '10', '15', '20', '25', '30', '35', '40', '45', '50', '55'];
+  const minValues = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
+  if (mode === 'hour') {
+    return clockHandHTML(hourLabels, hourLabels, h12) + clockFaceNumbersHTML(hourLabels, hourLabels, h12) + `<div class="cp-center-dot"></div>`;
+  }
+  // Minute mode: show all 60 tick marks as selectable via the nearest-5 ring, but only render
+  // the 12 five-minute labels (matches the reference image); any-minute values still work since
+  // the hand highlights the nearest 5-minute mark.
+  const nearest5 = Math.round(m / 5) * 5 % 60;
+  return clockHandHTML(minLabels, minValues, nearest5) + clockFaceNumbersHTML(minLabels, minValues, nearest5) + `<div class="cp-center-dot"></div>`;
+}
+function clockPickerModalHTML(h12, m, ampm, mode) {
+  return `
+  <div class="cp-modal">
+    <div class="cp-header">
+      <div class="cp-time-display">
+        <span class="cp-seg ${mode === 'hour' ? 'active' : ''}" data-mode="hour">${h12}</span>
+        <span class="cp-colon">:</span>
+        <span class="cp-seg ${mode === 'minute' ? 'active' : ''}" data-mode="minute">${pad2(m)}</span>
+      </div>
+      <div class="cp-ampm">
+        <button type="button" class="cp-ampm-btn ${ampm === 'AM' ? 'active' : ''}" data-ap="AM">AM</button>
+        <button type="button" class="cp-ampm-btn ${ampm === 'PM' ? 'active' : ''}" data-ap="PM">PM</button>
+      </div>
+    </div>
+    <div class="cp-clock-face" id="cpClockFace">${clockFaceHTML(mode, h12, m)}</div>
+    <div class="cp-actions">
+      <button type="button" class="btn btn-ghost" id="cpCancelBtn">CANCEL</button>
+      <button type="button" class="btn btn-primary" id="cpOkBtn">OK</button>
+    </div>
+  </div>`;
+}
+function openClockPicker(value24, onSave) {
+  const t = time24to12(value24);
+  const state = { h12: t.h12, m: t.m, ampm: t.ampm, mode: 'hour' };
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay cp-overlay';
+  overlay.innerHTML = clockPickerModalHTML(state.h12, state.m, state.ampm, state.mode);
+  document.body.appendChild(overlay);
+
+  function rerender() {
+    overlay.innerHTML = clockPickerModalHTML(state.h12, state.m, state.ampm, state.mode);
+    bindEvents();
+  }
+  function bindEvents() {
+    overlay.querySelectorAll('.cp-seg').forEach(seg => {
+      seg.onclick = () => { state.mode = seg.dataset.mode; rerender(); };
+    });
+    overlay.querySelectorAll('.cp-ampm-btn').forEach(btn => {
+      btn.onclick = () => { state.ampm = btn.dataset.ap; rerender(); };
+    });
+    overlay.querySelectorAll('.cp-num').forEach(num => {
+      num.onclick = () => {
+        const val = Number(num.dataset.val);
+        if (state.mode === 'hour') { state.h12 = val; state.mode = 'minute'; }
+        else { state.m = val; }
+        rerender();
+      };
+    });
+    document.getElementById('cpCancelBtn').onclick = () => overlay.remove();
+    document.getElementById('cpOkBtn').onclick = () => {
+      const value24 = time12to24(state.h12, state.m, state.ampm);
+      overlay.remove();
+      onSave(value24);
+    };
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  }
+  bindEvents();
 }
 
 function rentalDays(r) {
