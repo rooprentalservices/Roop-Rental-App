@@ -567,6 +567,54 @@ function rentalStatusBadge(r) {
   return { cls: 'on', label: 'On Rent' };
 }
 
+/* ---------- Historical ("as of date") calculations — used ONLY by Reports, for periods that
+   aren't "today". Reports for a past period must reflect what was true as of that period's end
+   date, not today's live numbers (e.g. a March report shouldn't change because of an April
+   payment, and an ongoing rental's day-count shouldn't run past the report's own end date).
+   These reuse the same static fields (transport/discount/oldDues/refund) as the live functions
+   above — only the day-count-dependent chain is re-derived for a specific "as of" date. Not used
+   for partial-return handling; that stays entirely out of scope here. ---------- */
+function invoiceDateOf(r) { return r.invoiceDate || r.date || ''; }
+function rentalDaysAsOf(r, asOfDate) {
+  const start = combineDateTime(r.date, r.time);
+  const returnedByThen = r.actualReturnDate && r.actualReturnDate <= asOfDate;
+  const end = returnedByThen ? combineDateTime(r.actualReturnDate, r.actualReturnTime) : combineDateTime(asOfDate, '23:59');
+  const diff = Math.ceil((end - start) / 86400000);
+  return Math.max(diff, 1);
+}
+function itemTotalAsOf(item, r, asOfDate) {
+  return (Number(item.qty) || 0) * (Number(item.rentPerDay) || 0) * rentalDaysAsOf(r, asOfDate);
+}
+function rentalItemsTotalAsOf(r, asOfDate) {
+  return (r.items || []).reduce((s, it) => s + itemTotalAsOf(it, r, asOfDate), 0);
+}
+function rentalGrandTotalAsOf(r, asOfDate) {
+  return rentalItemsTotalAsOf(r, asOfDate) + transportBilledTotal(r) + (Number(r.oldDues) || 0)
+    - (Number(r.discount) || 0) - (Number(r.refundAmount) || 0);
+}
+function rentalPaidAsOf(r, asOfDate) {
+  return (r.payments || []).reduce((s, p) => s + ((p.date && p.date <= asOfDate) ? (Number(p.amount) || 0) : 0), 0);
+}
+function rentalAdvanceAsOf(r, asOfDate) {
+  const advDate = r.advanceDate || r.date;
+  return (advDate && advDate <= asOfDate) ? rentalAdvance(r) : 0;
+}
+// Outstanding due as it stood at the close of asOfDate — ignores any payment/advance dated after it.
+function rentalDueAsOf(r, asOfDate) {
+  if (!r.date || r.date > asOfDate) return 0; // hadn't started yet as of that date
+  return Math.max(rentalGrandTotalAsOf(r, asOfDate) - rentalAdvanceAsOf(r, asOfDate) - rentalPaidAsOf(r, asOfDate), 0);
+}
+function isReturnedAsOfDate(r, asOfDate) {
+  return !!(r.actualReturnDate && r.actualReturnDate <= asOfDate);
+}
+// Item quantity considered "on rent" at the close of asOfDate (0 if not yet started, or already
+// returned, by then).
+function getItemsOnRentAsOfDate(r, asOfDate) {
+  if (!r.date || r.date > asOfDate) return 0;
+  if (isReturnedAsOfDate(r, asOfDate)) return 0;
+  return (r.items || []).reduce((s, it) => s + (Number(it.qty) || 0), 0);
+}
+
 /* ---------- Customer upsert ---------- */
 async function upsertCustomerFromRental(r) {
   if (!r.customerName) return;
@@ -708,24 +756,56 @@ function paymentsCollectedInRange(from, to) {
 }
 
 function computeReportSummary(from, to) {
-  const inRange = state.rentals.filter(r => !r.deleted && r.date && r.date >= from && r.date <= to);
+  const notDeleted = state.rentals.filter(r => !r.deleted);
+
+  // Rentals: counted by Rental Date, status/items-on-rent evaluated AS OF the period's end date
+  // (not today) so a past report stays historically accurate regardless of what's happened since.
+  const inRange = notDeleted.filter(r => r.date && r.date >= from && r.date <= to);
   const totalRentalEntries = inRange.length;
-  const activeRentals = inRange.filter(r => itemReturnState(r) !== 'returned' && !r.archived).length;
-  const closedRentals = inRange.filter(r => itemReturnState(r) === 'returned').length;
+  const activeRentals = inRange.filter(r => !isReturnedAsOfDate(r, to) && !r.archived).length;
+  const closedRentals = inRange.filter(r => isReturnedAsOfDate(r, to)).length;
   let itemsOnRent = 0;
-  inRange.forEach(r => { if (itemReturnState(r) !== 'returned') (r.items || []).forEach(it => { itemsOnRent += Number(it.qty) || 0; }); });
-  const invoicedInRange = inRange.filter(r => r.invoiceNumber);
+  inRange.forEach(r => { itemsOnRent += getItemsOnRentAsOfDate(r, to); });
+
+  // Invoices: counted by Invoice Date, NOT Rental Date — a rental dated in March but invoiced in
+  // April belongs to April's invoice figures.
+  const invoicedInRange = notDeleted.filter(r => r.invoiceNumber && invoiceDateOf(r) >= from && invoiceDateOf(r) <= to);
   const totalInvoices = invoicedInRange.length;
-  const totalInvoiceAmount = invoicedInRange.reduce((s, r) => s + rentalGrandTotal(r), 0);
+  const totalInvoiceAmount = invoicedInRange.reduce((s, r) => s + rentalGrandTotal(r), 0); // same calc the invoice itself uses
+  // Outstanding as of period end, for this period's own invoices — an April payment on a March
+  // invoice must not silently reduce March's closing outstanding figure.
+  const totalOutstandingDue = invoicedInRange.reduce((s, r) => s + rentalDueAsOf(r, to), 0);
+  const paidInvoiceAmount = Math.max(totalInvoiceAmount - totalOutstandingDue, 0);
+
+  // Payments: strictly by Payment Date, independent of when the rental/invoice itself was dated.
   const totalReceived = paymentsCollectedInRange(from, to);
-  const totalOutstandingDue = inRange.reduce((s, r) => s + rentalDue(r), 0);
-  const totalRentalCharges = inRange.reduce((s, r) => s + rentalItemsTotal(r), 0);
+  let numberOfPayments = 0;
+  notDeleted.forEach(r => (r.payments || []).forEach(p => { if (p.date && p.date >= from && p.date <= to) numberOfPayments++; }));
+
+  // Revenue breakdown — Gross Rental Charges capped to the period's end date (so an ongoing
+  // rental's day-count doesn't run past a historical report's own end date), Discount, and the
+  // resulting Net Rental Revenue. Transport/Old Dues/Refund are reported separately and are
+  // never folded into revenue.
+  const grossRentalCharges = inRange.reduce((s, r) => s + rentalItemsTotalAsOf(r, to), 0);
+  const totalDiscount = inRange.reduce((s, r) => s + (Number(r.discount) || 0), 0);
+  const netRentalRevenue = Math.max(grossRentalCharges - totalDiscount, 0);
+  const totalTransportBilled = inRange.reduce((s, r) => s + transportBilledTotal(r), 0);
+  const totalOldDues = inRange.reduce((s, r) => s + (Number(r.oldDues) || 0), 0);
+  const totalRefunds = inRange.reduce((s, r) => s + (Number(r.refundAmount) || 0), 0);
+
   const avgInvoiceValue = totalInvoices > 0 ? totalInvoiceAmount / totalInvoices : 0;
-  return { totalRentalEntries, activeRentals, closedRentals, itemsOnRent, totalInvoices, totalInvoiceAmount, totalReceived, totalOutstandingDue, totalRentalCharges, avgInvoiceValue };
+
+  return {
+    totalRentalEntries, activeRentals, closedRentals, itemsOnRent,
+    totalInvoices, totalInvoiceAmount, paidInvoiceAmount, totalOutstandingDue,
+    totalReceived, numberOfPayments,
+    grossRentalCharges, totalDiscount, netRentalRevenue, totalTransportBilled, totalOldDues, totalRefunds,
+    avgInvoiceValue
+  };
 }
 
-// Monthly buckets (Invoice Amount / Collection / Outstanding Due) spanning the selected range,
-// capped at 24 months so an unusually large custom range doesn't produce an unreadable chart.
+// Monthly buckets spanning the selected range, capped at 24 months so an unusually large custom
+// range doesn't produce an unreadable chart.
 function computeReportMonthlyChart(from, to) {
   const start = new Date(from + 'T00:00:00'), end = new Date(to + 'T00:00:00');
   const months = [];
@@ -735,13 +815,21 @@ function computeReportMonthlyChart(from, to) {
     cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
   }
   const notDeleted = state.rentals.filter(r => !r.deleted);
-  const invoiceAmount = months.map(m => notDeleted.filter(r => r.invoiceNumber && (r.date || '').startsWith(m)).reduce((s, r) => s + rentalGrandTotal(r), 0));
+  // Invoice Amount: bucketed by Invoice Date, not Rental Date.
+  const invoiceAmount = months.map(m => notDeleted.filter(r => r.invoiceNumber && invoiceDateOf(r).startsWith(m)).reduce((s, r) => s + rentalGrandTotal(r), 0));
+  // Collection: bucketed by Payment Date (already correct).
   const collection = months.map(m => {
     const mStart = m + '-01';
     const mEnd = new Date(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0).toISOString().slice(0, 10);
     return paymentsCollectedInRange(mStart, mEnd);
   });
-  const outstandingDue = months.map(m => notDeleted.filter(r => (r.date || '').startsWith(m)).reduce((s, r) => s + rentalDue(r), 0));
+  // Outstanding Due: the CLOSING balance as of each month's end, across every rental that had
+  // already started by then — a running receivables trend (e.g. March 10,000 -> April 6,000 ->
+  // May 0 as payments come in), not a per-month "new business this month" bucket.
+  const outstandingDue = months.map(m => {
+    const mEnd = new Date(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0).toISOString().slice(0, 10);
+    return notDeleted.filter(r => r.date && r.date <= mEnd).reduce((s, r) => s + rentalDueAsOf(r, mEnd), 0);
+  });
   return { months, invoiceAmount, collection, outstandingDue };
 }
 
@@ -1278,8 +1366,9 @@ function renderReportChart(title, months, data, gradient) {
 
 function renderReports() {
   const range = currentReportRange();
-  const summary = computeReportSummary(range.from, range.to);
-  const chart = computeReportMonthlyChart(range.from, range.to);
+  const invalidRange = state.reportPeriodType === 'custom' && state.reportFromDate && state.reportToDate && state.reportFromDate > state.reportToDate;
+  const summary = invalidRange ? null : computeReportSummary(range.from, range.to);
+  const chart = invalidRange ? null : computeReportMonthlyChart(range.from, range.to);
   const fyYears = availableFYStartYears();
   const calYears = availableCalendarYears();
   const curFY = state.reportFY != null ? state.reportFY : fyStartYearFor();
@@ -1297,6 +1386,27 @@ function renderReports() {
   const monthlyData = months6.map(m => active.filter(r => (r.date || '').startsWith(m)).reduce((s, r) => s + rentalRevenueCollected(r), 0));
   const maxMonth = Math.max(...monthlyData, 1);
   const inc = computeIncomeDashboard();
+
+  if (invalidRange) {
+    return `
+      <div class="page-header"><h2>Reports</h2></div>
+      <div class="card report-filter-card">
+        <div class="section-title" style="margin-top:0;">Report Period</div>
+        <div class="report-period-tabs">
+          <button type="button" class="rpt-tab" data-rpt-type="fy">Financial Year</button>
+          <button type="button" class="rpt-tab" data-rpt-type="calendar">Calendar Year</button>
+          <button type="button" class="rpt-tab active" data-rpt-type="custom">Custom Range</button>
+        </div>
+        <div class="rpt-range-row">
+          <div><label>From</label><input type="date" id="rptFromDate" value="${state.reportFromDate || ''}"></div>
+          <div><label>To</label><input type="date" id="rptToDate" value="${state.reportToDate || ''}"></div>
+        </div>
+      </div>
+      <div class="card" style="border:1px solid var(--red);background:#fee2e2;color:#b91c1c;font-size:13px;font-weight:600;">
+        ⚠️ "From Date" is after "To Date" — please pick a valid range. The report can't be generated until this is fixed.
+      </div>
+    `;
+  }
 
   return `
     <div class="page-header"><h2>Reports</h2></div>
@@ -1337,29 +1447,42 @@ function renderReports() {
     </div>
 
     <div class="pro-card-group">
-      <div class="pro-group-title"><span class="pro-group-icon" style="background:#dbeafe;">📋</span>Rentals</div>
+      <div class="pro-group-title"><span class="pro-group-icon" style="background:#dbeafe;">📋</span>Rental Summary</div>
       <div class="pro-card-grid">
         <div class="pro-stat-card blue"><div class="pro-stat-icon">📋</div><div class="pro-stat-body"><div class="pro-stat-val">${summary.totalRentalEntries}</div><div class="pro-stat-lbl">Total Rental Entries</div></div></div>
         <div class="pro-stat-card blue"><div class="pro-stat-icon">🟢</div><div class="pro-stat-body"><div class="pro-stat-val">${summary.activeRentals}</div><div class="pro-stat-lbl">Active Rentals</div></div></div>
-        <div class="pro-stat-card indigo"><div class="pro-stat-icon">✔️</div><div class="pro-stat-body"><div class="pro-stat-val">${summary.closedRentals}</div><div class="pro-stat-lbl">Closed Rentals</div></div></div>
+        <div class="pro-stat-card indigo"><div class="pro-stat-icon">✔️</div><div class="pro-stat-body"><div class="pro-stat-val">${summary.closedRentals}</div><div class="pro-stat-lbl">Returned Rentals</div></div></div>
         <div class="pro-stat-card orange"><div class="pro-stat-icon">🔢</div><div class="pro-stat-body"><div class="pro-stat-val">${summary.itemsOnRent}</div><div class="pro-stat-lbl">Items Currently On Rent</div></div></div>
       </div>
     </div>
 
     <div class="pro-card-group">
-      <div class="pro-group-title"><span class="pro-group-icon" style="background:#ede9fe;">🧾</span>Invoices &amp; Payments</div>
+      <div class="pro-group-title"><span class="pro-group-icon" style="background:#ede9fe;">🧾</span>Invoice Summary</div>
       <div class="pro-card-grid">
         <div class="pro-stat-card indigo"><div class="pro-stat-icon">🧾</div><div class="pro-stat-body"><div class="pro-stat-val">${summary.totalInvoices}</div><div class="pro-stat-lbl">Total Invoices</div></div></div>
         <div class="pro-stat-card orange"><div class="pro-stat-icon">💰</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(summary.totalInvoiceAmount)}</div><div class="pro-stat-lbl">Total Invoice Amount</div></div></div>
-        <div class="pro-stat-card green"><div class="pro-stat-icon">✅</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(summary.totalReceived)}</div><div class="pro-stat-lbl">Amount Received</div></div></div>
-        <div class="pro-stat-card red"><div class="pro-stat-icon">⚠️</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(summary.totalOutstandingDue)}</div><div class="pro-stat-lbl">Outstanding Due</div></div></div>
+        <div class="pro-stat-card green"><div class="pro-stat-icon">✅</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(summary.paidInvoiceAmount)}</div><div class="pro-stat-lbl">Paid Invoice Amount</div></div></div>
+        <div class="pro-stat-card red"><div class="pro-stat-icon">⚠️</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(summary.totalOutstandingDue)}</div><div class="pro-stat-lbl">Outstanding Invoice Amount</div></div></div>
       </div>
     </div>
 
     <div class="pro-card-group">
-      <div class="pro-group-title"><span class="pro-group-icon" style="background:#dcfce7;">📈</span>Rental Income</div>
+      <div class="pro-group-title"><span class="pro-group-icon" style="background:#dcfce7;">💳</span>Collection Summary</div>
       <div class="pro-card-grid">
-        <div class="pro-stat-card green"><div class="pro-stat-icon">💵</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(summary.totalRentalCharges)}</div><div class="pro-stat-lbl">Total Rental Charges</div></div></div>
+        <div class="pro-stat-card green"><div class="pro-stat-icon">💵</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(summary.totalReceived)}</div><div class="pro-stat-lbl">Amount Received During Period</div></div></div>
+        <div class="pro-stat-card blue"><div class="pro-stat-icon">🔢</div><div class="pro-stat-body"><div class="pro-stat-val">${summary.numberOfPayments}</div><div class="pro-stat-lbl">Number of Payments</div></div></div>
+      </div>
+    </div>
+
+    <div class="pro-card-group">
+      <div class="pro-group-title"><span class="pro-group-icon" style="background:#fef3c7;">📈</span>Revenue Summary</div>
+      <div class="pro-card-grid">
+        <div class="pro-stat-card blue"><div class="pro-stat-icon">💵</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(summary.grossRentalCharges)}</div><div class="pro-stat-lbl">Gross Rental Charges</div></div></div>
+        <div class="pro-stat-card orange"><div class="pro-stat-icon">➖</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(summary.totalDiscount)}</div><div class="pro-stat-lbl">Discount</div></div></div>
+        <div class="pro-stat-card green"><div class="pro-stat-icon">✅</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(summary.netRentalRevenue)}</div><div class="pro-stat-lbl">Net Rental Revenue</div></div></div>
+        <div class="pro-stat-card indigo"><div class="pro-stat-icon">🚚</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(summary.totalTransportBilled)}</div><div class="pro-stat-lbl">Transportation Billed</div></div></div>
+        <div class="pro-stat-card blue"><div class="pro-stat-icon">📇</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(summary.totalOldDues)}</div><div class="pro-stat-lbl">Old Dues</div></div></div>
+        <div class="pro-stat-card red"><div class="pro-stat-icon">↩️</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(summary.totalRefunds)}</div><div class="pro-stat-lbl">Refunds</div></div></div>
         <div class="pro-stat-card blue"><div class="pro-stat-icon">📊</div><div class="pro-stat-body"><div class="pro-stat-val">${fmtMoney(summary.avgInvoiceValue)}</div><div class="pro-stat-lbl">Average Invoice Value</div></div></div>
       </div>
     </div>
@@ -2807,8 +2930,9 @@ function bindRentalDetailEvents(r) {
 /* ---------- Invoice Print ---------- */
 /* ---------- Reports: Print / PDF / Excel export ---------- */
 function openReportPrint() {
-  const s = state.settings;
   const range = currentReportRange();
+  if (state.reportPeriodType === 'custom' && range.from > range.to) { toast('Fix the date range before generating a report.'); return; }
+  const s = state.settings;
   const summary = computeReportSummary(range.from, range.to);
   const periodLabel = currentReportRangeLabel();
   const w = window.open('', '_blank');
@@ -2838,11 +2962,10 @@ function openReportPrint() {
       <div class="sub">Report Period: ${escapeHtml(periodLabel)} &nbsp;·&nbsp; Generated: ${fmtDate(todayISO())}</div>
     </div>
     <div class="body">
-      ${section('Rentals', [['Total Rental Entries', summary.totalRentalEntries], ['Active Rentals', summary.activeRentals], ['Closed Rentals', summary.closedRentals]])}
-      ${section('Items', [['Items Currently On Rent', summary.itemsOnRent]])}
-      ${section('Invoices', [['Total Number of Invoices', summary.totalInvoices], ['Total Invoice Amount', fmtMoney(summary.totalInvoiceAmount)]])}
-      ${section('Payments', [['Total Amount Received', fmtMoney(summary.totalReceived)], ['Total Outstanding Due', fmtMoney(summary.totalOutstandingDue)]])}
-      ${section('Rental Income', [['Total Rental Charges', fmtMoney(summary.totalRentalCharges)], ['Average Invoice Value', fmtMoney(summary.avgInvoiceValue)]])}
+      ${section('Rental Summary', [['Total Rental Entries', summary.totalRentalEntries], ['Active Rentals', summary.activeRentals], ['Returned Rentals', summary.closedRentals], ['Items Currently On Rent', summary.itemsOnRent]])}
+      ${section('Invoice Summary', [['Total Invoices', summary.totalInvoices], ['Total Invoice Amount', fmtMoney(summary.totalInvoiceAmount)], ['Paid Invoice Amount', fmtMoney(summary.paidInvoiceAmount)], ['Outstanding Invoice Amount', fmtMoney(summary.totalOutstandingDue)]])}
+      ${section('Collection Summary', [['Amount Received During Period', fmtMoney(summary.totalReceived)], ['Number of Payments', summary.numberOfPayments]])}
+      ${section('Revenue Summary', [['Gross Rental Charges', fmtMoney(summary.grossRentalCharges)], ['Discount', fmtMoney(summary.totalDiscount)], ['Net Rental Revenue', fmtMoney(summary.netRentalRevenue)], ['Transportation Billed', fmtMoney(summary.totalTransportBilled)], ['Old Dues', fmtMoney(summary.totalOldDues)], ['Refunds', fmtMoney(summary.totalRefunds)], ['Average Invoice Value', fmtMoney(summary.avgInvoiceValue)]])}
     </div>
     <script>window.onload = () => window.print();<\/script>
     </body></html>
@@ -2852,8 +2975,9 @@ function openReportPrint() {
 
 function exportReportExcel() {
   if (typeof XLSX === 'undefined') { toast('Excel export library failed to load — check your internet connection.'); return; }
-  const s = state.settings;
   const range = currentReportRange();
+  if (state.reportPeriodType === 'custom' && range.from > range.to) { toast('Fix the date range before exporting a report.'); return; }
+  const s = state.settings;
   const summary = computeReportSummary(range.from, range.to);
   const periodLabel = currentReportRangeLabel();
   const rows = [
@@ -2861,25 +2985,30 @@ function exportReportExcel() {
     ['Report Period', periodLabel],
     ['Generated On', fmtDate(todayISO())],
     [],
-    ['Rentals'],
+    ['Rental Summary'],
     ['Total Rental Entries', summary.totalRentalEntries],
     ['Active Rentals', summary.activeRentals],
-    ['Closed Rentals', summary.closedRentals],
-    [],
-    ['Items'],
+    ['Returned Rentals', summary.closedRentals],
     ['Items Currently On Rent', summary.itemsOnRent],
     [],
-    ['Invoices'],
-    ['Total Number of Invoices', summary.totalInvoices],
+    ['Invoice Summary'],
+    ['Total Invoices', summary.totalInvoices],
     ['Total Invoice Amount', summary.totalInvoiceAmount],
+    ['Paid Invoice Amount', summary.paidInvoiceAmount],
+    ['Outstanding Invoice Amount', summary.totalOutstandingDue],
     [],
-    ['Payments'],
-    ['Total Amount Received', summary.totalReceived],
-    ['Total Outstanding Due', summary.totalOutstandingDue],
+    ['Collection Summary'],
+    ['Amount Received During Period', summary.totalReceived],
+    ['Number of Payments', summary.numberOfPayments],
     [],
-    ['Rental Income'],
-    ['Total Rental Charges', summary.totalRentalCharges],
-    ['Average Invoice Value', Math.round(summary.avgInvoiceValue)]
+    ['Revenue Summary'],
+    ['Gross Rental Charges', summary.grossRentalCharges],
+    ['Discount', summary.totalDiscount],
+    ['Net Rental Revenue', summary.netRentalRevenue],
+    ['Transportation Billed', summary.totalTransportBilled],
+    ['Old Dues', summary.totalOldDues],
+    ['Refunds', summary.totalRefunds],
+    ['Average Invoice Value', summary.avgInvoiceValue] // kept as a precise decimal, not rounded
   ];
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet(rows);
