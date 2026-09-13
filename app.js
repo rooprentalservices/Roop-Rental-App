@@ -191,7 +191,11 @@ function clockPickerModalHTML(h12, m, ampm, mode) {
 }
 function openClockPicker(value24, onSave) {
   const t = time24to12(value24);
-  const state = { h12: t.h12, m: t.m, ampm: t.ampm, mode: 'hour' };
+  // Snap to the nearest 5-minute mark immediately so the digital display always matches what's
+  // highlighted on the clock face (this picker only supports 5-minute selection, so showing an
+  // exact unsnapped minute at the top while a different mark is highlighted looked like a bug).
+  const snappedM = Math.round(t.m / 5) * 5 % 60;
+  const state = { h12: t.h12, m: snappedM, ampm: t.ampm, mode: 'hour' };
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay cp-overlay';
   overlay.innerHTML = clockPickerModalHTML(state.h12, state.m, state.ampm, state.mode);
