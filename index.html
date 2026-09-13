@@ -64,7 +64,7 @@
   .cp-num{position:absolute;width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;transform:translate(-50%,-50%);font-size:14px;font-weight:600;color:var(--text);cursor:pointer;z-index:2;}
   .cp-num.selected{background:var(--indigo-800);color:#fff;}
   .cp-center-dot{position:absolute;left:130px;top:130px;width:8px;height:8px;border-radius:50%;background:var(--indigo-800);transform:translate(-50%,-50%);z-index:1;}
-  .cp-hand{position:absolute;left:130px;top:130px;width:2px;height:98px;background:var(--indigo-800);transform-origin:top center;margin-left:-1px;z-index:0;}
+  .cp-hand{position:absolute;left:130px;top:32px;width:2px;height:98px;background:var(--indigo-800);transform-origin:bottom center;margin-left:-1px;z-index:0;}
   .cp-actions{display:flex;justify-content:flex-end;gap:8px;padding:12px 16px 18px;}
   .cp-actions .btn{padding:9px 16px;font-size:13px;font-weight:700;}
 
@@ -169,10 +169,10 @@
   .invoice-preview-card .ip-line3 .ip-due.clear{color:var(--green);}
 
   .fab{position:fixed;right:18px;bottom:86px;width:58px;height:58px;border-radius:50%;
-    background:linear-gradient(135deg,var(--amber),#ea7c1f);color:#2b1400;border:none;font-size:28px;
-    box-shadow:0 8px 22px rgba(245,158,11,.45);z-index:25;opacity:.62;transition:opacity .15s ease;touch-action:none;}
+    background:linear-gradient(135deg,var(--amber),var(--amber-dark));color:var(--fab-icon-color,#2b1400);border:none;font-size:28px;
+    box-shadow:0 8px 22px color-mix(in srgb, var(--amber) 45%, transparent);z-index:25;opacity:.62;transition:opacity .15s ease;touch-action:none;}
   .fab:active{opacity:1;}
-  .fab.dragging{opacity:.85;box-shadow:0 4px 14px rgba(245,158,11,.3);}
+  .fab.dragging{opacity:.85;box-shadow:0 4px 14px color-mix(in srgb, var(--amber) 30%, transparent);}
 
   nav.bottomnav{position:fixed;bottom:0;left:0;right:0;max-width:520px;margin:0 auto;background:var(--card);
     border-top:1px solid var(--border);display:flex;z-index:24;padding:6px 4px calc(6px + env(safe-area-inset-bottom));}

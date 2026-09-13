@@ -440,6 +440,7 @@ function applyThemeConfig() {
   const headerDark2 = shadeHex(accent, -0.6);
   root.setProperty('--indigo-900', mode === 'dark' ? headerDark1 : headerDark1);
   root.setProperty('--indigo-800', headerDark2);
+  root.setProperty('--fab-icon-color', isDarkColor(accent) ? '#ffffff' : '#2b1400');
 
   // backgrounds
   if (tc.screenBg) root.setProperty('--bg', tc.screenBg);
